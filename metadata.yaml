@@ -3,7 +3,7 @@ display_name: 智能图片对话
 desc: LLM 驱动的一体化图片对话插件。自动生成多维度图像标签，并通过多模态语义分析，实现智能斗图、主动表情、表情包分享等多种功能，支持多源导入图库。
 author: 青尘工作室
 version: v2.8.1
-repo: https://github.com/JREion/astrbot_plugin_smart_imagechat_hub
+repo: https://github.com/QingchenWait/astrbot_plugin_smart_imagechat_hub
 support_platforms:
   - aiocqhttp
   - qq_official

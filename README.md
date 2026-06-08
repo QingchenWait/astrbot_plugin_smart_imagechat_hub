@@ -56,7 +56,7 @@ LLM 驱动的 AstrBot 一体化智能图片对话插件。
 本页面基于 AstrBot 的新特性开发 (`>=4.24.2`)，无需配置端口映射等，一键直达。
 
 
-![如何进入 Page UI](https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/how_to_enter_page_ui.png)
+![如何进入 Page UI](https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/how_to_enter_page_ui.png)
 
 ### 第三步：上传图片 + 配置标签
 
@@ -70,11 +70,11 @@ LLM 驱动的 AstrBot 一体化智能图片对话插件。
 
 1. _(可选)_ 配置 [**公用特征标签**]：当需要为多张图片分配相同的标签时，可以预先填写。(公用标签不会直接应用到所有图像，需要在后续配置)
 
-   <img src="https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/upload_imgs_and_global_tags_in_page_ui.png" style="border: 2px solid gray;"/>
+   <img src="https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/upload_imgs_and_global_tags_in_page_ui.png" style="border: 2px solid gray;"/>
 
 2. 上传图片后，插件会自动在后台调用 LLM 自动生成标签。可以在 UI Page 的进度面板中查看实时状态。
 
-   <img src="https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/import_imgs_then_check_tag_generation_step.png" style="border: 2px solid gray;"/>
+   <img src="https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/import_imgs_then_check_tag_generation_step.png" style="border: 2px solid gray;"/>
 
 ## 📱 在聊天中使用插件
 
@@ -185,7 +185,7 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 2. 用户或机器人，需要在 UI Page 中进行批量筛选，决定 [**待筛选图片池**] 中 丢弃 / 保留 哪些图片。
 3. 保留的图片，会进入 [**固化图像库**]，按 "手动上传的图片" 相同的规则，参与打标签和检索。
 
-<img src="https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/filter_auto_collected_images.png" width="100%" style="border: 2px solid gray;"/>
+<img src="https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/filter_auto_collected_images.png" width="100%" style="border: 2px solid gray;"/>
 
 点击 UI Page [**插件能力配置**] 栏中的 [**自动收集群友发的图**] 按钮，即可进行偷图行为的配置。
 
@@ -217,7 +217,7 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 3. 用户需要在 UI Page 中进行批量筛选，决定 [**导入进程**] 图片池中是否要丢弃图片、取消导入进程。点击 "开始" 启动自动标签流程。
 4. 保留的图片，会进入 [**来自外部插件的图像库**]，按 "手动上传的图片" 与自动收集流程中 "固化图像库" 相同的规则，参与打标签和检索。
 
-<img src="https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/import_image_from_other_plugins.png" width="100%" style="border: 2px solid gray;"/>
+<img src="https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/import_image_from_other_plugins.png" width="100%" style="border: 2px solid gray;"/>
 
 一些可选项如下：
 
@@ -292,7 +292,7 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 - 选择附加的公用标签 (上面配置的公用标签，会变成选项，方便快速选取)
 - 保存或删除图片
 
-<img src="https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/config_and_edit_tags_in_page_ui.png" style="border: 2px solid gray;"/>
+<img src="https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/config_and_edit_tags_in_page_ui.png" style="border: 2px solid gray;"/>
 
 ### 10. 插件数据导入/导出
 
@@ -311,7 +311,7 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 
   - **选择是否覆盖插件配置**：勾选时，则将会将插件系统配置 (不包含图库数据) 替换为 ZIP 备份中保存的配置。
 
-    <img src="https://raw.githubusercontent.com/JREion/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/import_backup_data_in_page_ui.png" width="60%" style="border: 2px solid gray;"/>
+    <img src="https://raw.githubusercontent.com/QingchenWait/astrbot_plugin_smart_imagechat_hub/refs/heads/main/imgs/import_backup_data_in_page_ui.png" width="60%" style="border: 2px solid gray;"/>
 
   - 完成后，点击 "确认导入"，稍等片刻即可。
 
