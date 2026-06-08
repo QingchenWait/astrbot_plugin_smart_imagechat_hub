@@ -1,0 +1,537 @@
+{
+  "default_image_caption_provider_id": {
+    "description": "默认图片转述模型",
+    "type": "string",
+    "default": "",
+    "options": [],
+    "hint": "必须选择一个支持图片理解的可用模型，用于图库图片自动特征标签生成。插件会同步写入 AstrBot 系统活动配置文件中的 [默认图片转述模型]。",
+    "obvious_hint": true
+  },
+  "library_builder": {
+    "description": "📄 构建图库与特征标签 (推荐通过 UI Page 管理)",
+    "type": "object",
+    "default": {},
+    "hint": "上传图库，插件将自动生成图像标签。提示：本插件提供额外的可视化管理 UI Page (点击 [智能图片对话] 插件卡片，打开 [插件行为]->[页面])，建议直接在 UI Page 中配置下列 1-3 步。",
+    "items": {
+      "global_tags": {
+        "description": "第 1 步：建立公用特征标签",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "(可选) 建立所有图像都能选择的手工标签，方便为多张图片赋予相同的标签。"
+      },
+      "image_files": {
+        "description": "第 2 步：上传本地图片库",
+        "type": "file",
+        "default": [],
+        "file_types": ["jpg", "jpeg", "png", "gif", "webp", "bmp"],
+        "hint": "在这里上传图片，插件会自动在后台调用 LLM 生成 [自动特征标签]。可在系统日志或插件 UI Page 页面查看进度。注意：自动标签生成必须在 AstrBot 的 [系统配置] 中，配置 [默认图片转述模型]。"
+      },
+      "empty_config_for_hint_only": {
+        "description": "第 3 步：查看标签生成进度",
+        "type": "string",
+        "default": "/#/plugin-page/astrbot_plugin_smart_imagechat_hub/image-center-page",
+        "readonly": true,
+        "hint": "第 2 步完成后，请点击 [保存并关闭] 退出配置页面，随后进入插件 UI Page (点击 [智能图片对话] 插件卡片，打开 [插件行为]->[页面])，查看自动图像标签生成进度，并修改标签。"
+      }
+    }
+  },
+  "caption_tag_category_settings": {
+    "description": "✍️ 生成标签类别设定",
+    "type": "object",
+    "default": {},
+    "hint": "控制插件为图片自动赋予特征标签时，优先基于哪些类别来生成。修改后只影响新上传图片；如需重载旧图库，请在插件 Page 中使用对应选项。",
+    "items": {
+      "enabled_presets": {
+        "description": "预设标签类别",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "options": [
+          "图像类别",
+          "人物特征",
+          "身材",
+          "情绪",
+          "动作",
+          "图片中的文本"
+        ],
+        "default": [
+          "图像类别",
+          "人物特征",
+          "身材",
+          "情绪",
+          "动作",
+          "图片中的文本"
+        ],
+        "hint": "可勾选的预设类别：图像类别 (是照片还是表情包)、人物特征、身材、情绪、动作、图片中的文本。"
+      },
+      "custom_categories": {
+        "description": "自定义标签类别",
+        "type": "string",
+        "default": "",
+        "hint": "可输入多个自定义类别，各个类别之间可以用空格、逗号或顿号隔开。"
+      }
+    }
+  },
+  "hidden_images": {
+    "description": "从检索中隐藏的图片路径",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "图片仍保留在磁盘和配置里，但不会被 LLM 选择。"
+  },
+  "sync_on_startup": {
+    "description": "启动时同步图片库",
+    "type": "bool",
+    "default": true
+  },
+  "match_confidence_threshold": {
+    "description": "最低匹配置信度",
+    "type": "float",
+    "default": 0.45,
+    "hint": "LLM 输出的 confidence 低于该值时视为未找到合适图片。"
+  },
+  "user_search_flow": {
+    "description": "🔍️ 为用户寻找表情包",
+    "type": "object",
+    "default": {},
+    "hint": "用户唤醒机器人后，如果对话中存在下列关键词，则在图库中检索满足要求的表情包。",
+    "items": {
+      "enabled": {
+        "description": "开启为用户寻找表情包功能",
+        "type": "bool",
+        "default": true,
+        "hint": "关闭后，即使用户对话包含下方关键词，也不会触发机器人为用户检索并发送图库图片；不会影响“对话中主动发送表情包”功能。"
+      },
+      "request_keywords": {
+        "description": "触发图片发送流程的关键词",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": ["照片", "表情包", "美图", "图片"],
+        "hint": "用户唤醒机器人后，消息中包含任一关键词才会进入本插件流程。注意：自动标签生成必须在 AstrBot 的 [系统配置] 中，配置 [默认图片转述模型]。",
+        "obvious_hint": true
+      }
+    }
+  },
+  "reply_after_search": {
+    "description": "🎤 寻找表情包后对用户的回复 (推荐通过 UI Page 管理)",
+    "type": "object",
+    "default": {},
+    "hint": "这里集中管理命中图片、未命中图片和图库为空时的回复方式。",
+    "items": {
+      "use_custom_reply": {
+        "description": "找到图片后使用自定义文案",
+        "type": "bool",
+        "default": true,
+        "hint": "关闭后会继续一次 AstrBot 原 LLM 回复流程，并提示模型告知用户已经找到图片。"
+      },
+      "custom_reply": {
+        "description": "自定义文案",
+        "type": "text",
+        "default": "找到一张比较合适的图。",
+        "hint": "支持 {filename}、{tags}、{need}、{reason} 占位符。"
+      },
+      "llm_reply_when_not_found": {
+        "description": "未找到图片时交给原 LLM 回复",
+        "type": "bool",
+        "default": false
+      },
+      "not_found_reply": {
+        "description": "未找到图片时的固定回复",
+        "type": "text",
+        "default": "图库里暂时没有找到特别合适的图片。"
+      },
+      "empty_library_reply": {
+        "description": "图库为空时的固定回复",
+        "type": "text",
+        "default": "图库里还没有可用图片，请先在插件配置里上传图片。"
+      }
+    }
+  },
+  "proactive_emoji_reply": {
+    "description": "📤️ 对话中主动发送表情包",
+    "type": "object",
+    "default": {},
+    "hint": "调用 LLM 对 bot 回复用户的内容进行语义分析，从图库中选择并发送符合语境的表情包。",
+    "items": {
+      "enabled": {
+        "description": "启用主动发送表情包",
+        "type": "bool",
+        "default": false,
+        "hint": "当 bot 的对话由 LLM 生成，且概率命中时，启动语义情感分析 + 表情包发送流程。"
+      },
+      "analysis_provider_id": {
+        "description": "LLM 发言分析模型",
+        "type": "string",
+        "default": "",
+        "options": [],
+        "hint": "可填写 AstrBot 系统配置中 [模型提供商] 的 provider id；留空或不可用时，继承 AstrBot 当前会话的模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 qwen3.6-flash。"
+      },
+      "meme_only": {
+        "description": "只选择表情包",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，只从带“表情包”特征标签的图库图像中筛选。"
+      },
+      "embed_in_conversation": {
+        "description": "表情包嵌入在对话中发送",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，表情包和对话在同一次对话中一起发送；关闭后，对话遵循原先的 LLM 普通对话发送流程，表情包会以非 LLM 输出格式独立发送。关闭此选项可避免与其他插件产生兼容性冲突。"
+      },
+      "trigger_probability": {
+        "description": "主动回复表情包概率",
+        "type": "string",
+        "default": "0.25",
+        "hint": "取值范围 0-1。只有普通 LLM 回复概率命中时，才启动语义和情感分析 + 表情包选择流程。"
+      }
+    }
+  },
+  "auto_image_collection": {
+    "description": "📩 自动收集群友发的图",
+    "type": "object",
+    "default": {},
+    "hint": "在指定 QQ 群中收集图片。图片先进入 [待筛选图片池]，用户需要在 UI Page 中选择哪些图像加入 [固化图像库]，入库后才会自动打标签、被检索。",
+    "items": {
+      "enabled": {
+        "description": "启用自动收集图片功能",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，插件会在指定 QQ 群中自动收集图片，放入 [待筛选图片池]。"
+      },
+      "auto_accept": {
+        "description": "自动将所有待筛选图片入库",
+        "type": "bool",
+        "default": false,
+        "hint": "手动筛选入库图片只能在 UI Page 中进行。如果无法访问 UI Page，请将此选项 [开启]。",
+        "obvious_hint": true
+      },
+      "include_in_features": {
+        "description": "将入库图像加入插件其他功能的筛选流程",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，[固化图像库] 中的图片，会和手动上传图像一起，作为“为用户寻找表情包”和“对话中主动发送表情包”的检索候选项。"
+      },
+      "source_groups": {
+        "description": "收集来源 QQ 群号",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "每项一个 QQ 群号。机器人只在这些群聊中自动收集图片。"
+      },
+      "max_file_size_kb": {
+        "description": "单张图片尺寸上限 (KB)",
+        "type": "int",
+        "default": 1024
+      },
+      "pending_pool_limit": {
+        "description": "待筛选图片池存储数量上限",
+        "type": "int",
+        "default": 30,
+        "hint": "达到上限时，新收集到的图片将不再进入待筛选图片池，直到有空间腾出。"
+      },
+      "pending_ttl_days": {
+        "description": "待筛选图片池存储时间 (天)",
+        "type": "int",
+        "default": 3
+      },
+      "auto_reject_discarded": {
+        "description": "自动拒绝曾经被丢弃过的图片",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，会记录在待筛选图片池中被手动丢弃过的图片摘要。后续自动收集到相同图片时将直接跳过，不会进入待筛选图片池；关闭后停止记录新的丢弃记录，但不会删除已有记录。"
+      },
+      "solidified_library_limit": {
+        "description": "固化图像库存储数量上限",
+        "type": "int",
+        "default": 300,
+        "hint": "设置为 -1 表示无上限。达到上限时，新收集到的图片将不再进入固化图像库，直到有空间腾出。"
+      }
+    }
+  },
+  "meme_combat": {
+    "description": "🥊 群聊智能斗图",
+    "type": "object",
+    "default": {},
+    "hint": "在群聊图片对话中自动加入队形、按概率连发相关图片，或在连续图片团战中检索语义相近的图库图片。运行时只保留短时间窗口状态，以降低服务器负担。",
+    "items": {
+      "enabled": {
+        "description": "开启群聊智能斗图功能",
+        "type": "bool",
+        "default": false,
+        "hint": "总开关。关闭后不会统计群聊图片窗口，也不会触发加入队形、图片连发或参与团战 (即使打开了下面的子功能开关)。"
+      },
+      "follow_pattern": {
+        "description": "加入队形",
+        "type": "object",
+        "default": {},
+        "items": {
+          "enabled": {
+            "description": "开启加入队形",
+            "type": "bool",
+            "default": true,
+            "hint": "如果多名群友连续发送相同图片，bot 会跟着队形进行接龙。"
+          },
+          "time_window_seconds": {
+            "description": "统计的时间窗口 (秒)",
+            "type": "int",
+            "default": 30
+          },
+          "same_image_count": {
+            "description": "相同图片的出现次数",
+            "type": "int",
+            "default": 3,
+            "hint": "注意：请设置为 >=2，避免 bot 跟着单个用户发同一张图。"
+          },
+          "distinct_users_required": {
+            "description": "队形图片必须来自不同用户",
+            "type": "bool",
+            "default": false,
+            "hint": "开启后，相同用户在统计窗口内多次发送同一张图片只计为一次；必须达到指定数量的不同用户发送同一张图片，bot 才会加入队形。"
+          }
+        }
+      },
+      "image_burst": {
+        "description": "图片连发",
+        "type": "object",
+        "default": {},
+        "items": {
+          "enabled": {
+            "description": "开启图片连发",
+            "type": "bool",
+            "default": true,
+            "hint": "bot 有一定概率在某次图片回复中，连续发送多张表情包。"
+          },
+          "trigger_probability": {
+            "description": "触发连发的概率",
+            "type": "string",
+            "default": "0.2",
+            "hint": "取值范围 0-1。只统计 bot 使用本插件能力发送包含图片的回复次数；其他插件控制 bot 发送的图片不计算。"
+          },
+          "burst_count": {
+            "description": "连发图片的数量",
+            "type": "int",
+            "default": 2,
+            "hint": "bot 最开始发出的那张图片不计入连发数量。"
+          }
+        }
+      },
+      "battle": {
+        "description": "参与团战",
+        "type": "object",
+        "default": {},
+        "items": {
+          "enabled": {
+            "description": "开启参与团战",
+            "type": "bool",
+            "default": true,
+            "hint": "如果群聊进入斗图团战 (对话中连续出现图片)，bot 会抽取其中 2 张图片快速分析语义，从自己的图库中搜索表情包参与团战。"
+          },
+          "time_window_seconds": {
+            "description": "统计的时间窗口 (秒)",
+            "type": "int",
+            "default": 30
+          },
+          "continuous_image_count": {
+            "description": "对话中连续出现图片的数量",
+            "type": "int",
+            "default": 6
+          },
+          "analysis_provider_id": {
+            "description": "图片语义快速分析 LLM 模型",
+            "type": "string",
+            "default": "",
+            "options": [],
+            "hint": "继承 AstrBot 系统配置中的模型提供商列表；留空或所选模型不可用时，继承 AstrBot 当前会话模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 qwen3.6-flash。"
+          }
+        }
+      }
+    }
+  },
+  "scheduled_backup": {
+    "description": "🗄️ 定时备份",
+    "type": "object",
+    "default": {},
+    "hint": "Page 页面「导出配置」悬浮窗口会显示这里维护的自动备份文件列表。原生 WebUI 仅提供配置与下载提示；备份文件实际存放于插件数据目录下的 scheduled_backups 子目录中。",
+    "items": {
+      "enabled": {
+        "description": "开启定时备份功能",
+        "type": "bool",
+        "default": true
+      },
+      "backup_time": {
+        "description": "每日自动数据备份时间",
+        "type": "string",
+        "default": "06:00",
+        "hint": "24 小时制，格式为 HH:MM，例如 06:00 或 23:30。"
+      },
+      "backup_limit": {
+        "description": "备份数量",
+        "type": "int",
+        "default": 3,
+        "hint": "超过数量后自动删除最早的备份，最小值为 1。"
+      },
+      "backup_files": {
+        "description": "数据备份列表",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "readonly": true,
+        "hint": "自动维护的备份文件列表。若原生 WebUI 无法一键下载，请前往插件 UI Page 的导出配置弹窗下载，也可以直接访问插件数据目录中的 scheduled_backups 子目录。"
+      }
+    }
+  },
+  "model_fallback_options": {
+    "description": "🧯 模型失效时的回退选项",
+    "type": "object",
+    "default": {},
+    "hint": "当默认图片转述模型、图片语义快速分析 LLM 模型或 LLM 发言分析模型不可用时，插件会先尝试这里配置的供应商；全部失败后继续继承 AstrBot 的回退对话模型列表。",
+    "items": {
+      "mode": {
+        "description": "回退方式",
+        "type": "string",
+        "default": "inherit",
+        "options": [
+          "inherit",
+          "manual"
+        ],
+        "labels": [
+          "继承 AstrBot 的回退对话模型列表",
+          "手动配置"
+        ],
+        "hint": "inherit 表示直接继承 AstrBot 的回退对话模型列表；manual 表示先按下方优先级 1-3 尝试手动选择的供应商。"
+      },
+      "priority_1": {
+        "description": "优先级 1",
+        "type": "string",
+        "default": "",
+        "options": [],
+        "hint": "仅在回退方式为 manual 时生效。"
+      },
+      "priority_2": {
+        "description": "优先级 2",
+        "type": "string",
+        "default": "",
+        "options": [],
+        "hint": "仅在回退方式为 manual 时生效。"
+      },
+      "priority_3": {
+        "description": "优先级 3",
+        "type": "string",
+        "default": "",
+        "options": [],
+        "hint": "仅在回退方式为 manual 时生效。"
+      },
+      "provider_ids": {
+        "description": "手动回退供应商列表（Page 使用）",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "invisible": true,
+        "hint": "插件 UI Page 使用该字段保存可排序列表；原生 WebUI 可使用优先级 1-3 字段。"
+      }
+    }
+  },
+  "use_custom_reply": {
+    "description": "兼容旧版：找到图片后使用自定义文案",
+    "type": "bool",
+    "default": true,
+    "invisible": true
+  },
+  "custom_reply": {
+    "description": "兼容旧版：自定义回复文案",
+    "type": "text",
+    "default": "找到一张比较合适的图。",
+    "invisible": true
+  },
+  "llm_reply_when_not_found": {
+    "description": "兼容旧版：未找到图片时交给原 LLM 回复",
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "not_found_reply": {
+    "description": "兼容旧版：未找到图片时的固定回复",
+    "type": "text",
+    "default": "图库里暂时没有找到特别合适的图片。",
+    "invisible": true
+  },
+  "empty_library_reply": {
+    "description": "兼容旧版：图库为空时的回复",
+    "type": "text",
+    "default": "图库里还没有可用图片，请先在插件配置里上传图片。",
+    "invisible": true
+  },
+  "reply_config_migrated": {
+    "description": "内部字段：回复配置迁移状态",
+    "type": "bool",
+    "default": false,
+    "invisible": true
+  },
+  "image_tags": {
+    "description": "🏷️ 图片特征标签列表 (推荐通过 UI Page 管理)",
+    "type": "template_list",
+    "default": [],
+    "hint": "管理图库和每张图像对应的标签。提示：本插件提供图库的可视化管理 UI，建议使用 UI Page (点击 [智能图片对话] 插件卡片，打开 [插件行为]->[页面])，图像和标签管理体验更好。",
+    "templates": {
+      "image_tag": {
+        "name": "图像标签",
+        "hint": "保存配置或同步图库后，条目标题会显示为“图像标签：图片相对路径”。手动修改后，检索会使用本条目标签 + 附加的公用特征标签。",
+        "items": {
+          "image_path": {
+            "description": "图片相对路径",
+            "type": "string",
+            "default": "",
+            "invisible": true
+          },
+          "tags": {
+            "description": "自动生成的特征标签 (可手动修改)",
+            "type": "list",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "selected_global_tags": {
+            "description": "附加的公用特征标签",
+            "type": "list",
+            "items": {
+              "type": "string"
+            },
+            "options": [],
+            "default": [],
+            "hint": "可从“全局特征标签”中选择一个或多个标签。检索时会与本条目标签合并。"
+          },
+          "auto_tags": {
+            "description": "LLM 自动特征标签",
+            "type": "list",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "invisible": true
+          },
+          "manual_tags_override": {
+            "description": "Page 标签编辑状态",
+            "type": "bool",
+            "default": false,
+            "invisible": true
+          }
+        }
+      }
+    }
+  }
+}

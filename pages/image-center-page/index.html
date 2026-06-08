@@ -1,0 +1,1625 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智能图片对话插件 | 图像库处理中心</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="panel progress-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Smart Image Sender</p>
+            <h1>智能图片对话插件 | 图像库处理中心</h1>
+          </div>
+          <div id="statusBadge" class="status-badge">读取中</div>
+        </div>
+
+        <div class="progress-wrap" aria-label="标签生成进度">
+          <div class="progress-track">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <div id="percentText" class="percent-text">0%</div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat">
+            <span>总数</span>
+            <strong id="totalCount">0</strong>
+          </div>
+          <div class="stat">
+            <span>完成</span>
+            <strong id="completedCount">0</strong>
+          </div>
+          <div class="stat">
+            <span>失败</span>
+            <strong id="failedCount">0</strong>
+          </div>
+          <div class="stat">
+            <span>剩余</span>
+            <strong id="remainingCount">0</strong>
+          </div>
+        </div>
+
+        <dl class="details">
+          <div>
+            <dt>当前图片</dt>
+            <dd id="currentImage">-</dd>
+          </div>
+          <div>
+            <dt>图库图片</dt>
+            <dd id="libraryCount">0</dd>
+          </div>
+          <div>
+            <dt>更新时间</dt>
+            <dd id="updatedAt">-</dd>
+          </div>
+        </dl>
+
+        <div class="message-row">
+          <p id="messageText" class="message-text">正在读取后台状态...</p>
+          <button id="refreshButton" type="button" class="secondary">刷新</button>
+        </div>
+        <p id="completeHint" class="complete-hint is-hidden">
+          请点击 [上传新图片] 按钮更新图库，本插件会自动为新图片分配标签。<br>
+          本 Page 页面中提供了丰富的功能配置和图库管理方法，请向下划动本页面，进一步进行详细配置。
+        </p>
+
+        <div class="actions progress-actions">
+          <button id="openUploadButton" type="button" class="primary-action">上传新图片</button>
+          <button id="libraryManageButton" type="button" class="primary-action">图库管理</button>
+          <button id="tagCategoryButton" type="button" class="plain-button">自动标签生成流程配置 ...</button>
+          <div class="action-spacer"></div>
+          <button id="importButton" type="button" class="success-button">导入配置</button>
+          <button id="exportButton" type="button" class="success-button">导出配置</button>
+        </div>
+      </section>
+
+      <div class="capability-tags-layout">
+        <section class="panel capabilities-panel">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Capabilities</p>
+              <h2>插件能力配置</h2>
+            </div>
+          </div>
+
+          <div class="capability-actions">
+            <button id="userSearchButton" type="button">为用户寻找表情包</button>
+            <button id="proactiveEmojiButton" type="button">对话中主动发送表情包</button>
+            <button id="autoCollectionButton" type="button">自动收集群友发的图</button>
+            <button id="memeCombatButton" type="button">群聊智能斗图</button>
+            <button id="externalImportButton" type="button">从其他插件导入图库</button>
+            <button id="imagebedImportButton" type="button">从图床导入图库</button>
+            <button id="moreConfigButton" type="button" class="warning-button">更多插件配置 ...</button>
+          </div>
+        </section>
+
+        <section class="panel global-tags-panel">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Global Tags</p>
+              <h2>公用特征标签</h2>
+              <p>多图共享的可选特征标签。在本列表填写并保存后，在标签编辑器中可快速选择这些公用标签。</p>
+            </div>
+            <span id="globalTagsMeta" class="meta-text">0 个</span>
+          </div>
+
+          <textarea
+            id="globalTagsInput"
+            rows="4"
+            placeholder="每行一个公用特征标签，或用逗号分隔"
+          ></textarea>
+          <div class="tag-list global-tags-preview" id="globalTagsPreview"></div>
+          <p id="globalTagsMessage" class="editor-message"></p>
+          <div class="actions">
+            <button id="globalTagsSaveButton" type="button">保存公用标签</button>
+          </div>
+        </section>
+      </div>
+
+      <div id="libraryScopeSwitchRow" class="library-scope-switch-row">
+        <div class="library-scope-toggle" role="group" aria-label="鍥惧簱鏄剧ず妯″紡">
+          <button
+            id="manualLibraryScopeButton"
+            type="button"
+            class="scope-toggle-button"
+            aria-pressed="true"
+            aria-label="鎵嬪姩涓婁紶鐨勫浘搴?"
+            title="鎵嬪姩涓婁紶鐨勫浘搴?"
+          ></button>
+          <button
+            id="autoCollectionScopeButton"
+            type="button"
+            class="scope-toggle-button"
+            aria-pressed="false"
+            aria-label="鑷姩鏀堕泦鐨勫浘搴?"
+            title="鑷姩鏀堕泦鐨勫浘搴?"
+          ></button>
+          <button
+            id="externalImportScopeButton"
+            type="button"
+            class="scope-toggle-button"
+            aria-pressed="false"
+            aria-label="其他插件的图库"
+            title="其他插件的图库"
+          ></button>
+          <button
+            id="imagebedImportScopeButton"
+            type="button"
+            class="scope-toggle-button"
+            aria-pressed="false"
+            aria-label="图床同步的图库"
+            title="图床同步的图库"
+          ></button>
+        </div>
+      </div>
+
+      <div id="manualLibraryScope">
+      <section class="panel library-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Image Library</p>
+            <h2>手动上传的图像库与标签管理</h2>
+          </div>
+          <div class="library-header-actions">
+            <span id="libraryMeta" class="meta-text">0 张</span>
+            <div class="library-mode-toggle" role="group" aria-label="图库显示模式">
+              <button
+                id="libraryListModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="true"
+                aria-label="列表模式"
+                title="列表模式"
+              ></button>
+              <button
+                id="libraryGalleryModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="false"
+                aria-label="画廊模式"
+                title="画廊模式"
+              ></button>
+            </div>
+            <button id="libraryUploadButton" type="button" class="primary-action">上传新图片</button>
+          </div>
+        </div>
+
+        <div class="library-search-row">
+          <span class="library-search-icon" aria-hidden="true"></span>
+          <label class="library-search-box" for="libraryTagSearchInput">
+            <input
+              id="libraryTagSearchInput"
+              type="search"
+              autocomplete="off"
+              placeholder="按标签搜索"
+            />
+            <button
+              id="libraryTagSearchClearButton"
+              type="button"
+              class="library-search-clear is-hidden"
+              aria-label="清空手动图库标签搜索"
+              title="清空"
+            ></button>
+          </label>
+        </div>
+        <div id="libraryList" class="library-list"></div>
+        <p id="emptyLibraryText" class="empty-text">暂无已经生成特征标签的图像。</p>
+      </section>
+      </div>
+
+      <div id="autoCollectionScope" class="is-hidden">
+      <section class="panel pending-collection-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Pending Collection</p>
+            <h2>待筛选图片池</h2>
+          </div>
+          <div class="pending-header-actions">
+            <span id="pendingPoolMeta" class="meta-text">0 张</span>
+            <button id="pendingSkipButton" type="button" class="secondary">跳转到下一栏</button>
+            <button id="pendingSelectAllButton" type="button" class="secondary">全选</button>
+            <button id="pendingAcceptButton" type="button">批量入库</button>
+            <button id="pendingDiscardButton" type="button" class="danger-button">批量丢弃</button>
+          </div>
+        </div>
+        <div id="pendingPoolList" class="pending-pool-list"></div>
+        <p id="emptyPendingPoolText" class="empty-text">暂无待筛选图片。</p>
+        <p id="pendingPoolMessage" class="editor-message"></p>
+      </section>
+
+      <section class="panel library-panel solidified-library-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Solidified Library</p>
+            <h2>固化图像库与标签管理</h2>
+          </div>
+          <div class="library-header-actions">
+            <span id="solidifiedLibraryMeta" class="meta-text">0 张</span>
+            <div class="library-mode-toggle" role="group" aria-label="固化图像库显示模式">
+              <button
+                id="solidifiedListModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="true"
+                aria-label="列表模式"
+                title="列表模式"
+              ></button>
+              <button
+                id="solidifiedGalleryModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="false"
+                aria-label="画廊模式"
+                title="画廊模式"
+              ></button>
+            </div>
+            <button
+              id="solidifiedBackToScopeButton"
+              type="button"
+              class="library-mode-button standalone-icon-button"
+              aria-label="回到图库切换"
+              title="回到图库切换"
+            ></button>
+          </div>
+        </div>
+
+        <div class="library-search-row">
+          <span class="library-search-icon" aria-hidden="true"></span>
+          <label class="library-search-box" for="solidifiedLibraryTagSearchInput">
+            <input
+              id="solidifiedLibraryTagSearchInput"
+              type="search"
+              autocomplete="off"
+              placeholder="按标签搜索"
+            />
+            <button
+              id="solidifiedLibraryTagSearchClearButton"
+              type="button"
+              class="library-search-clear is-hidden"
+              aria-label="清空固化图库标签搜索"
+              title="清空"
+            ></button>
+          </label>
+        </div>
+        <div id="solidifiedLibraryList" class="library-list"></div>
+        <p id="emptySolidifiedLibraryText" class="empty-text">暂无已完成标签生成的固化图像。</p>
+      </section>
+      </div>
+
+      <div id="externalImportScope" class="is-hidden">
+      <section class="panel pending-collection-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">External Import</p>
+            <h2>导入进程</h2>
+          </div>
+          <div class="pending-header-actions">
+            <span id="externalImportPendingMeta" class="meta-text">0 张</span>
+            <button id="externalImportSelectAllButton" type="button" class="secondary">全选</button>
+            <button id="externalImportDeletePendingButton" type="button" class="danger-button">批量丢弃</button>
+            <button id="externalImportPauseButton" type="button" class="secondary" disabled>开始</button>
+            <button id="externalImportCancelCaptionButton" type="button" class="danger-button">取消导入</button>
+          </div>
+        </div>
+        <div id="externalImportPendingList" class="pending-pool-list"></div>
+        <p id="emptyExternalImportPendingText" class="empty-text">暂无从外部插件导入后等待打标签的图像。</p>
+        <p id="externalImportMessage" class="editor-message"></p>
+      </section>
+
+      <section class="panel library-panel external-library-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">External Library</p>
+            <h2>来自外部插件的图像库与标签管理</h2>
+          </div>
+          <div class="library-header-actions">
+            <span id="externalLibraryMeta" class="meta-text">0 张</span>
+            <div class="library-mode-toggle" role="group" aria-label="外部插件图像库显示模式">
+              <button
+                id="externalListModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="true"
+                aria-label="列表模式"
+                title="列表模式"
+              ></button>
+              <button
+                id="externalGalleryModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="false"
+                aria-label="画廊模式"
+                title="画廊模式"
+              ></button>
+            </div>
+            <button id="externalLibraryImportButton" type="button">从外部导入</button>
+          </div>
+        </div>
+
+        <div class="library-search-row">
+          <span class="library-search-icon" aria-hidden="true"></span>
+          <label class="library-search-box" for="externalLibraryTagSearchInput">
+            <input
+              id="externalLibraryTagSearchInput"
+              type="search"
+              autocomplete="off"
+              placeholder="按标签搜索"
+            />
+            <button
+              id="externalLibraryTagSearchClearButton"
+              type="button"
+              class="library-search-clear is-hidden"
+              aria-label="清空外部图库标签搜索"
+              title="清空"
+            ></button>
+          </label>
+        </div>
+        <div id="externalLibraryList" class="library-list"></div>
+        <p id="emptyExternalLibraryText" class="empty-text">暂无已完成标签生成的外部插件图像。</p>
+      </section>
+      </div>
+
+      <div id="imagebedImportScope" class="is-hidden">
+      <section class="panel pending-collection-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Imagebed Import</p>
+            <h2>导入进程</h2>
+          </div>
+          <div class="pending-header-actions">
+            <span id="imagebedImportPendingMeta" class="meta-text">0 张</span>
+            <button id="imagebedImportSelectAllButton" type="button" class="secondary">全选</button>
+            <button id="imagebedImportDeletePendingButton" type="button" class="danger-button">批量丢弃</button>
+            <button id="imagebedImportPauseButton" type="button" class="secondary" disabled>开始</button>
+            <button id="imagebedImportCancelCaptionButton" type="button" class="danger-button">取消导入</button>
+          </div>
+        </div>
+        <div id="imagebedImportPendingList" class="pending-pool-list"></div>
+        <p id="emptyImagebedImportPendingText" class="empty-text">暂无从图床导入后等待打标签的图像。</p>
+        <p id="imagebedImportDialogMessage" class="editor-message"></p>
+      </section>
+
+      <section class="panel library-panel imagebed-library-panel">
+        <div class="section-header">
+          <div>
+            <p class="eyebrow">Imagebed Library</p>
+            <h2>来自图床的图像库与标签管理</h2>
+          </div>
+          <div class="library-header-actions">
+            <span id="imagebedLibraryMeta" class="meta-text">0 张</span>
+            <div class="library-mode-toggle" role="group" aria-label="图床同步的图库显示模式">
+              <button
+                id="imagebedListModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="true"
+                aria-label="列表模式"
+                title="列表模式"
+              ></button>
+              <button
+                id="imagebedGalleryModeButton"
+                type="button"
+                class="library-mode-button"
+                aria-pressed="false"
+                aria-label="画廊模式"
+                title="画廊模式"
+              ></button>
+            </div>
+            <button id="imagebedLibraryImportButton" type="button">配置图床导入</button>
+          </div>
+        </div>
+
+        <div class="library-search-row">
+          <span class="library-search-icon" aria-hidden="true"></span>
+          <label class="library-search-box" for="imagebedLibraryTagSearchInput">
+            <input
+              id="imagebedLibraryTagSearchInput"
+              type="search"
+              autocomplete="off"
+              placeholder="按标签搜索"
+            />
+            <button
+              id="imagebedLibraryTagSearchClearButton"
+              type="button"
+              class="library-search-clear is-hidden"
+              aria-label="清空图床图库标签搜索"
+              title="清空"
+            ></button>
+          </label>
+        </div>
+        <div id="imagebedLibraryList" class="library-list"></div>
+        <p id="emptyImagebedLibraryText" class="empty-text">暂无从图床同步并完成打标签的图像。</p>
+      </section>
+      </div>
+
+    </main>
+
+    <div id="editorOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Edit Tags</p>
+            <h2 id="editorTitle">编辑图像标签</h2>
+          </div>
+          <button id="editorCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="editor-body">
+          <img id="editorImage" class="editor-image" alt="图像预览" />
+          <div class="editor-fields">
+            <label for="tagInput">特征标签</label>
+            <textarea id="tagInput" rows="5" placeholder="每行一个标签，或用逗号分隔"></textarea>
+
+            <label>附加到本图像的公用特征标签</label>
+            <div id="globalTagChoices" class="global-tag-choices"></div>
+          </div>
+        </div>
+
+        <p id="editorMessage" class="editor-message"></p>
+
+        <div class="actions editor-actions">
+          <button id="editorSaveButton" type="button">保存标签</button>
+          <button id="editorCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="tagCategoryOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel tag-category-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">Caption Categories</p>
+            <h2>自动生成标签流程配置</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="tagCategorySaveButton" type="button">保存</button>
+            <button id="tagCategoryCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title auto-caption-section-title">
+              <h3>⚙️ 自动标签生成设定</h3>
+              <p>设置用于图库图片自动特征标签生成的图片转述模型。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="captionProviderInput">默认图片转述模型</label>
+                <p>默认继承 AstrBot 系统活动配置文件中的“默认图片转述模型”设置；保存后会同步写入系统配置。</p>
+              </div>
+              <div class="config-item-control">
+                <select id="captionProviderInput"></select>
+                <p id="captionProviderWarning" class="provider-warning is-hidden">
+                  需要选择一个支持图片理解的可用图片转述模型。
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title">
+              <h3>✍️ 生成标签类别设定</h3>
+              <p>控制插件为图片自动赋予特征标签时，优先基于哪些类别来生成。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label>预设标签类别</label>
+                <p>可勾选的预设类别：图像类别 (是照片还是表情包)、人物特征、身材、情绪、动作、图片中的文本。</p>
+              </div>
+              <div class="config-item-control">
+                <div id="tagCategoryPresetChoices" class="preset-category-choices"></div>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="tagCategoryCustomInput">自定义标签类别</label>
+                <p>可输入多个自定义类别，各个类别之间可以用空格、逗号或顿号隔开。</p>
+              </div>
+              <div class="config-item-control">
+                <input
+                  id="tagCategoryCustomInput"
+                  type="text"
+                  placeholder="例如：服饰、构图、画风"
+                />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="tagCategoryRecaptionInput">使用新的标签类别重新加载图库</label>
+                <p><span class="danger-note"> 注意：该操作会清空图库中原先的特征标签 (公用标签除外)</span></p>
+              </div>
+              <div class="config-item-control">
+                <label class="checkbox-option recaption-option">
+                  <input id="tagCategoryRecaptionInput" type="checkbox" />
+                  <span>使用新的标签类别重新加载图库 <br /> <strong>注意：该操作会清空图库中原先的特征标签 (公用标签除外)</strong></span>
+                </label>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="tagCategoryMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="proactiveEmojiOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel config-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">Proactive Emoji Reply</p>
+            <h2>对话中主动发送表情包</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="proactiveEmojiSaveButton" type="button">保存</button>
+            <button id="proactiveEmojiCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>📤️ 对话中主动发送表情包</h3>
+              <p>调用 LLM 对 bot 回复用户的内容进行语义分析，从图库中选择并发送符合语境的表情包。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="proactiveEmojiEnabledInput">启用主动发送表情包</label>
+                <p>当 bot 的对话由 LLM 生成，且概率命中时，启动语义情感分析 + 表情包发送流程。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="proactiveEmojiEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="proactiveEmojiProviderInput">LLM 发言分析模型</label>
+                <p>继承 AstrBot 系统配置中的模型提供商；留空或不可用时，继承当前会话的模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 qwen3.6-flash。</p>
+              </div>
+              <div class="config-item-control">
+                <select id="proactiveEmojiProviderInput"></select>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="proactiveEmojiMemeOnlyInput">只选择表情包</label>
+                <p>开启后，只从带“表情包”特征标签的图库图像中筛选。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="proactiveEmojiMemeOnlyInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="proactiveEmojiEmbedInput">表情包嵌入在对话中发送</label>
+                <p>开启后，表情包和对话在同一次对话中一起发送；关闭后，对话遵循原先的 LLM 普通对话发送流程，表情包会以非 LLM 输出格式独立发送。关闭此选项可避免与其他插件产生兼容性冲突。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="proactiveEmojiEmbedInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="proactiveEmojiProbabilityInput">主动回复表情包概率</label>
+                <p>取值范围 0-1。只有普通 LLM 回复概率命中时，才启动语义和情感分析 + 表情包选择流程。</p>
+              </div>
+              <div class="config-item-control">
+                <input
+                  id="proactiveEmojiProbabilityInput"
+                  type="text"
+                  placeholder="0.25"
+                />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="proactiveEmojiMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="autoCollectionOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel config-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">Auto Image Collection</p>
+            <h2>自动收集群友发的图</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="autoCollectionSaveButton" type="button">保存</button>
+            <button id="autoCollectionCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>📩 自动收集群友发的图</h3>
+              <p>在指定 QQ 群中收集图片。图片先进入 [待筛选图片池]，用户需要选择哪些图像加入 [固化图像库]，入库后才会自动打标签、被检索。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionEnabledInput">启用自动收集图片功能</label>
+                <p>开启后，插件会在指定 QQ 群中自动收集图片，放入 [待筛选图片池]。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="autoCollectionEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+            
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionAutoAcceptInput">自动将所有待筛选图片入库</label>
+                <p> (建议关闭) 关闭时，用户可手动指定 [待筛选图片池] 中哪些图片存入 [固化图像库]。开启后，图像将实时自动入库。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="autoCollectionAutoAcceptInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionIncludeInput">将入库图像加入插件其他功能的筛选流程</label>
+                <p>开启后，[固化图像库] 中的图片，会和手动上传图像一起，作为“为用户寻找表情包”和“对话中主动发送表情包”的检索候选项。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="autoCollectionIncludeInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionGroupsInput">收集来源 QQ 群群号列表</label>
+                <p>每行一个 QQ 群号。机器人只在这些群聊中自动收集图片。</p>
+              </div>
+              <div class="config-item-control">
+                <textarea id="autoCollectionGroupsInput" rows="4" placeholder="每行一个群号"></textarea>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionMaxSizeInput">单张图片尺寸上限 (KB)</label>
+              </div>
+              <div class="config-item-control">
+                <input id="autoCollectionMaxSizeInput" type="number" min="1" step="1" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionPendingLimitInput">待筛选图片池存储数量上限</label>
+              </div>
+              <div class="config-item-control">
+                <input id="autoCollectionPendingLimitInput" type="number" min="0" step="1" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionTtlInput">待筛选图片池存储时间 (天)</label>
+              </div>
+              <div class="config-item-control">
+                <input id="autoCollectionTtlInput" type="number" min="0" step="1" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionRejectDiscardedInput">自动拒绝曾经被丢弃过的图片</label>
+                <p>开启后，会记录被 [待筛选图片池] 手动丢弃的图片信息；再次见到相同图片时直接跳过。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="autoCollectionRejectDiscardedInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="autoCollectionSolidifiedLimitInput">固化图像库存储数量上限</label>
+                <p>设置为 -1 表示无上限。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="autoCollectionSolidifiedLimitInput" type="number" min="-1" step="1" />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="autoCollectionMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="memeCombatOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel config-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">Group Meme Combat</p>
+            <h2>群聊智能斗图</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="memeCombatSaveButton" type="button">保存</button>
+            <button id="memeCombatCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>🥊 群聊智能斗图</h3>
+              <p>在群聊图片对话中自动加入队形、按概率连发相关图片，或在连续图片团战中检索语义相近的图库图片。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatEnabledInput">群聊智能斗图功能总开关</label>
+                <p>功能总开关。关闭后，不会统计群聊图片窗口，也不会触发加入队形、图片连发或参与团战 (即使打开了下面的子功能开关)。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="memeCombatEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>加入队形</h3>
+              <p>如果多名群友在时间窗口内连续发送相同图片，bot 会跟着队形进行接龙。</p>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatFollowEnabledInput">开启加入队形</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="memeCombatFollowEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatFollowWindowInput">统计的时间窗口 (秒)</label>
+              </div>
+              <div class="config-item-control">
+                <input id="memeCombatFollowWindowInput" type="number" min="1" step="1" />
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatFollowCountInput">相同图片的出现次数</label>
+                <p>注意：请设置为 >=2，以避免 bot 跟着单个用户发同一张图。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="memeCombatFollowCountInput" type="number" min="2" step="1" />
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatFollowDistinctUsersInput">队形图片必须来自不同用户</label>
+                <p>开启后，相同用户在统计窗口内多次发送同一张图片只计为一次；必须达到指定数量的不同用户发送同一张图片，bot 才会加入队形。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="memeCombatFollowDistinctUsersInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>图片连发</h3>
+              <p>bot 有一定概率在某次图片回复中，连续发送多张表情包。</p>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBurstEnabledInput">开启图片连发</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="memeCombatBurstEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBurstProbabilityInput">触发连发的概率</label>
+                <p>取值范围 0-1。其他插件控制 bot 发送的图片不计算。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="memeCombatBurstProbabilityInput" type="text" placeholder="0.2" />
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBurstCountInput">连发图片的数量</label>
+                <p>bot 最开始发出的那张图片不计入连发数量。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="memeCombatBurstCountInput" type="number" min="1" step="1" />
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>参与团战</h3>
+              <p>如果群聊进入斗图团战 (对话中连续出现图片)，bot 会抽取其中 2 张图片快速分析语义，从自己的图库中搜索表情包参与团战。</p>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBattleEnabledInput">开启参与团战</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="memeCombatBattleEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBattleWindowInput">统计的时间窗口 (秒)</label>
+              </div>
+              <div class="config-item-control">
+                <input id="memeCombatBattleWindowInput" type="number" min="1" step="1" />
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBattleCountInput">对话中连续出现图片的数量</label>
+              </div>
+              <div class="config-item-control">
+                <input id="memeCombatBattleCountInput" type="number" min="2" step="1" />
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="memeCombatBattleProviderInput">图片语义快速分析 LLM 模型</label>
+                <p>留空或不可用时继承 AstrBot 当前会话模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 qwen3.6-flash。</p>
+              </div>
+              <div class="config-item-control">
+                <select id="memeCombatBattleProviderInput"></select>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="memeCombatMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="userSearchOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel config-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">User Image Search</p>
+            <h2>为用户寻找表情包</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="userSearchSaveButton" type="button">保存</button>
+            <button id="userSearchCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>🔍️ 寻找表情包功能开关</h3>
+              <p>用户唤醒机器人后，如果对话中存在下列关键词，则在图库中检索满足要求的表情包。</p>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="userSearchEnabledInput">开启为用户寻找表情包功能</label>
+                <p>关闭后，即使用户对话包含下方关键词，也不会触发机器人为用户检索并发送图库图片；不会影响“对话中主动发送表情包”功能。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="userSearchEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configKeywordsInput">触发图片发送流程的关键词</label>
+                <p>用户唤醒机器人后，消息中包含任一关键词才会进入本插件流程。注意：自动标签生成必须在 AstrBot 的 [系统配置] 中，配置 [默认图片转述模型]。</p>
+              </div>
+              <div class="config-item-control">
+                <textarea
+                  id="configKeywordsInput"
+                  rows="4"
+                  placeholder="每行一个关键词，或用逗号分隔"
+                ></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title">
+              <h3>🎤 寻找表情包后对用户的回复</h3>
+              <p>这里集中管理命中图片、未命中图片和图库为空时的回复方式。</p>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configUseCustomReplyInput">找到图片后使用自定义文案</label>
+                <p>关闭后会继续一次 AstrBot 原 LLM 回复流程，并提示模型告知用户已经找到图片。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="configUseCustomReplyInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configCustomReplyInput">自定义文案</label>
+                <p>支持 {filename}、{tags}、{need}、{reason} 占位符。</p>
+              </div>
+              <div class="config-item-control">
+                <textarea
+                  id="configCustomReplyInput"
+                  rows="3"
+                  placeholder="支持 {filename}、{tags}、{need}、{reason} 占位符"
+                ></textarea>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configLlmReplyWhenNotFoundInput">未找到图片时交给原 LLM 回复</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="configLlmReplyWhenNotFoundInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configNotFoundReplyInput">未找到图片时的固定回复</label>
+              </div>
+              <div class="config-item-control">
+                <textarea id="configNotFoundReplyInput" rows="3"></textarea>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configEmptyLibraryReplyInput">图库为空时的固定回复</label>
+              </div>
+              <div class="config-item-control">
+                <textarea id="configEmptyLibraryReplyInput" rows="3"></textarea>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="userSearchMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="uploadOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel upload-dialog-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Upload</p>
+            <h2>上传新图片</h2>
+          </div>
+          <button id="uploadCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="upload-dialog-body">
+          <div class="upload-box">
+            <input
+              id="uploadInput"
+              type="file"
+              accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,image/*"
+              multiple
+            />
+            <button id="uploadButton" type="button">上传图片</button>
+          </div>
+
+          <p id="uploadMessage" class="editor-message"></p>
+        </div>
+      </section>
+    </div>
+
+    <div id="providerWarningOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel provider-warning-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Warning</p>
+            <h2>警告</h2>
+          </div>
+          <button id="providerWarningCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="provider-warning-body">
+          <p class="warning-dialog-text">
+            需要配置 [默认图片转述模型]，才能使用本插件的自动标签生成功能。
+          </p>
+
+          <div class="config-item warning-provider-item">
+            <div class="config-item-copy">
+              <label for="warningCaptionProviderInput">默认图片转述模型</label>
+              <p>与 [自动生成标签流程配置 ...] 中的同名配置项相同。选择后会立即保存，并同步写入 AstrBot 系统配置。</p>
+            </div>
+            <div class="config-item-control">
+              <select id="warningCaptionProviderInput"></select>
+              <p id="warningCaptionProviderHint" class="provider-warning is-hidden">
+                需要选择一个支持图片理解的可用图片转述模型。
+              </p>
+            </div>
+          </div>
+
+          <p id="providerWarningMessage" class="editor-message"></p>
+        </div>
+
+        <div class="actions provider-warning-actions">
+          <button id="providerWarningContinueButton" type="button">继续</button>
+          <button id="providerWarningCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="configOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel config-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">Plugin Settings</p>
+            <h2>更多插件配置</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="configSaveButton" type="button">保存</button>
+            <button id="configCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title">
+              <h3>⚙️ 图片检索流程配置</h3>
+              <p>这里可以管理图片检索的相关配置。</p>
+            </div>
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configHiddenImagesInput">从检索中隐藏的图片路径</label>
+                <p>图片仍保留在磁盘和配置里，但不会被 LLM 选择。</p>
+              </div>
+              <div class="config-item-control">
+                <textarea
+                  id="configHiddenImagesInput"
+                  rows="4"
+                  placeholder="每行一个图片相对路径"
+                ></textarea>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configSyncOnStartupInput">启动时同步图片库</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="configSyncOnStartupInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configConfidenceInput">最低匹配置信度</label>
+                <p>LLM 输出的 confidence 低于该值时视为未找到合适图片。</p>
+              </div>
+              <div class="config-item-control">
+                <input
+                  id="configConfidenceInput"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="configLibraryDefaultViewModeInput">图像库默认展示方式</label>
+                <p>后续打开 Page 时，四个图像库管理栏目会使用该展示方式。</p>
+              </div>
+              <div class="config-item-control">
+                <select id="configLibraryDefaultViewModeInput">
+                  <option value="list">列表模式</option>
+                  <option value="gallery">画廊模式</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title backup-section-title">
+              <h3>🗄️ 定时备份</h3>
+              <p>每天自动生成一份与导出配置相同格式的 ZIP 备份。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="scheduledBackupEnabledInput">开启定时备份功能</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="scheduledBackupEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="scheduledBackupTimeInput">每日自动数据备份时间</label>
+                <p>24 小时制，格式为 HH:MM。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="scheduledBackupTimeInput" type="time" step="60" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="scheduledBackupLimitInput">备份数量</label>
+                <p>超过数量后自动删除最早的备份。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="scheduledBackupLimitInput" type="number" min="1" step="1" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label>数据备份列表</label>
+              </div>
+              <div class="config-item-control">
+                <div id="scheduledBackupConfigList" class="backup-mini-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title fallback-section-title">
+              <h3>🧯 模型失效时的回退选项</h3>
+              <p>默认图片转述、图片语义快速分析和 LLM 发言分析模型不可用时使用。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label>回退方式</label>
+                <p>手动列表全部失败后，仍会继续继承 AstrBot 的回退对话模型列表。</p>
+              </div>
+              <div class="config-item-control">
+                <div class="fallback-mode-options">
+                  <label class="choice-option">
+                    <input id="modelFallbackModeInheritInput" type="radio" name="modelFallbackMode" value="inherit" />
+                    <span>继承 AstrBot 的回退对话模型列表</span>
+                  </label>
+                  <label class="choice-option">
+                    <input id="modelFallbackModeManualInput" type="radio" name="modelFallbackMode" value="manual" />
+                    <span>手动配置</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div id="modelFallbackManualPanel" class="config-item is-hidden">
+              <div class="config-item-copy">
+                <label for="modelFallbackProviderSelect">手动回退供应商优先级</label>
+                <p>列表从上到下依次尝试。</p>
+              </div>
+              <div class="config-item-control">
+                <div class="fallback-provider-picker">
+                  <select id="modelFallbackProviderSelect"></select>
+                  <button id="modelFallbackAddButton" type="button" class="secondary">添加</button>
+                </div>
+                <div id="modelFallbackProviderList" class="fallback-provider-list"></div>
+                <p id="modelFallbackEmptyText" class="empty-text inline">尚未添加手动回退供应商。</p>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="configMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="exportOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel export-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Backup Export</p>
+            <h2>导出配置</h2>
+          </div>
+          <button id="exportCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div id="exportProgressBar" class="indeterminate-bar is-hidden">
+          <span></span>
+        </div>
+
+        <div class="backup-list-header">
+          <strong>已存储的备份</strong>
+          <span>最多显示 3 个最新备份</span>
+        </div>
+        <div id="exportBackupList" class="backup-file-list"></div>
+        <p id="emptyExportBackupText" class="empty-text">暂无备份。</p>
+
+        <div class="export-dialog-footer">
+          <p id="exportDialogMessage" class="editor-message"></p>
+          <div class="actions editor-actions">
+            <button id="exportManualButton" type="button">手动导出</button>
+            <button id="exportCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="importOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel import-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Import Backup</p>
+            <h2>导入配置</h2>
+          </div>
+          <button id="importCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="import-fields">
+          <label for="importFileInput">ZIP 备份文件</label>
+          <input id="importFileInput" type="file" accept=".zip,application/zip" />
+
+          <fieldset>
+            <legend>图库导入方式</legend>
+            <label class="radio-option">
+              <input id="importModeMerge" type="radio" name="importMode" value="merge" checked />
+              <span>合并图库</span>
+            </label>
+            <label class="radio-option">
+              <input id="importModeOverwrite" type="radio" name="importMode" value="overwrite" />
+              <span>覆盖图库</span>
+            </label>
+          </fieldset>
+
+          <label class="checkbox-option">
+            <input id="importOverwriteConfig" type="checkbox" />
+            <span>覆盖插件配置</span>
+          </label>
+        </div>
+
+        <p id="importMessage" class="editor-message"></p>
+
+        <div class="actions editor-actions">
+          <button id="importConfirmButton" type="button">确认导入</button>
+          <button id="importCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="imagebedImportOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel config-panel external-import-panel">
+        <div class="editor-header config-header">
+          <div>
+            <p class="eyebrow">Imagebed Import</p>
+            <h2>配置图床导入</h2>
+          </div>
+          <div class="config-header-actions">
+            <button id="imagebedImportTestButton" type="button" class="success-button">测试连接</button>
+            <button id="imagebedImportStartButton" type="button" class="primary-action">开始导入</button>
+            <button id="imagebedImportSaveButton" type="button">保存</button>
+            <button id="imagebedImportCancelButton" type="button" class="secondary">取消</button>
+          </div>
+        </div>
+
+        <div class="imagebed-config-status">
+          <div>
+            <span>连接状态</span>
+            <strong id="imagebedConnectionStatus">-</strong>
+          </div>
+          <div>
+            <span>最后同步</span>
+            <strong id="imagebedLastSyncAt">-</strong>
+          </div>
+          <div>
+            <span>未同步数量</span>
+            <strong id="imagebedUnsyncedCount">-</strong>
+          </div>
+        </div>
+
+        <div class="config-sections">
+          <section class="config-section">
+            <div class="config-section-title capability-section-title">
+              <h3>Cloudflare R2 配置</h3>
+              <p>配置图床连接参数、同步前缀和单张图片大小上限。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedAccountIdInput">Account ID</label>
+                <p>Cloudflare R2 的账户 ID。若填写了完整 endpoint，也可以留空。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedAccountIdInput" type="text" autocomplete="off" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedAccessKeyIdInput">Access Key ID</label>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedAccessKeyIdInput" type="text" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedSecretAccessKeyInput">Secret Access Key</label>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedSecretAccessKeyInput" type="text" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedBucketNameInput">Bucket 名称</label>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedBucketNameInput" type="text" autocomplete="off" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedEndpointUrlInput">Endpoint URL</label>
+                <p>可选。留空时默认使用 Cloudflare R2 的标准 endpoint。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedEndpointUrlInput" type="text" autocomplete="off" placeholder="https://&lt;account_id&gt;.r2.cloudflarestorage.com" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedPrefixInput">对象前缀</label>
+                <p>可选。只同步该前缀下的对象。</p>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedPrefixInput" type="text" autocomplete="off" placeholder="images/" />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedMaxFileSizeKbInput">单张图片大小上限 (KB)</label>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedMaxFileSizeKbInput" type="number" min="1" step="1" />
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
+            <div class="config-section-title">
+              <h3>定时同步</h3>
+              <p>启用后，插件会在指定时间自动从图床同步新图片。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedScheduledEnabledInput">开启定时同步</label>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="imagebedScheduledEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="imagebedScheduledTimeInput">定时同步时间</label>
+              </div>
+              <div class="config-item-control">
+                <input id="imagebedScheduledTimeInput" type="time" />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <p id="imagebedImportMessage" class="editor-message"></p>
+      </section>
+    </div>
+
+    <div id="externalImportOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel external-import-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">External Library Import</p>
+            <h2>选择外部图库目录</h2>
+          </div>
+          <button id="externalImportCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div id="externalImportStatProgress" class="indeterminate-bar is-hidden">
+          <span></span>
+        </div>
+
+        <div id="externalImportTree" class="external-tree"></div>
+        <p id="externalImportSelectedPath" class="external-selected-path">请选择一个目录。</p>
+        <label class="checkbox-row external-import-parent-tag-option">
+          <input id="externalImportParentTagInput" type="checkbox" />
+          <span>将图像的上一级目录名称，作为标签之一导入<br />(选择此项可继承 meme_manager 等插件的标签系统)</span>
+        </label>
+        <p id="externalImportStatHint" class="external-import-hint is-hidden">请选择目录后点击“统计图库规模”，统计完成后才能开始导入。</p>
+        <p id="externalImportDialogMessage" class="editor-message"></p>
+
+        <div class="external-import-actions">
+          <button id="externalImportStatButton" type="button" class="primary-action is-hidden">统计图库规模</button>
+          <span id="externalImportStatText" class="meta-text"></span>
+          <span class="action-spacer"></span>
+          <button id="externalImportStartButton" type="button" disabled>开始导入</button>
+          <button id="externalImportCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="solidifiedCapacityOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel capacity-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Capacity Warning</p>
+            <h2>固化图像库容量不足</h2>
+          </div>
+          <button id="capacityCancelTopButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="capacity-body">
+          <p id="capacityWarningText" class="warning-dialog-text"></p>
+        </div>
+
+        <div class="capacity-actions">
+          <button id="capacityDeleteOldestButton" type="button" class="danger-button">删除最早入库的图像</button>
+          <span class="action-spacer"></span>
+          <button id="capacityExpandButton" type="button">一键扩容</button>
+          <button id="capacityCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="externalImportWarningOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel capacity-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">External Import Warning</p>
+            <h2 id="externalImportWarningTitle">操作确认</h2>
+          </div>
+          <button id="externalImportWarningCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="capacity-body">
+          <p id="externalImportWarningText" class="warning-dialog-text"></p>
+          <label class="checkbox-row compact">
+            <input id="externalImportWarningDontShowInput" type="checkbox" />
+            <span>不再提示</span>
+          </label>
+        </div>
+
+        <div class="capacity-actions">
+          <span class="action-spacer"></span>
+          <button id="externalImportWarningConfirmButton" type="button" class="danger-button">确定</button>
+          <button id="externalImportWarningCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="imagebedImportWarningOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel capacity-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow">Imagebed Import Warning</p>
+            <h2 id="imagebedImportWarningTitle">操作确认</h2>
+          </div>
+          <button id="imagebedImportWarningCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="capacity-body">
+          <p id="imagebedImportWarningText" class="warning-dialog-text"></p>
+          <label class="checkbox-row compact">
+            <input id="imagebedImportWarningDontShowInput" type="checkbox" />
+            <span>不再显示</span>
+          </label>
+        </div>
+
+        <div class="capacity-actions">
+          <span class="action-spacer"></span>
+          <button id="imagebedImportWarningConfirmButton" type="button" class="danger-button">确定</button>
+          <button id="imagebedImportWarningCancelButton" type="button" class="secondary">取消</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="captionErrorOverlay" class="editor-overlay is-hidden" role="dialog" aria-modal="true">
+      <section class="editor-panel caption-error-panel">
+        <div class="editor-header">
+          <div>
+            <p class="eyebrow" id="captionErrorEyebrow">任务错误</p>
+            <h2 id="captionErrorTitle">任务执行失败</h2>
+          </div>
+          <button id="captionErrorCloseButton" type="button" class="icon-button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="capacity-body">
+          <p id="captionErrorMessage" class="warning-dialog-text"></p>
+          <details class="caption-error-details">
+            <summary>报错信息</summary>
+            <pre id="captionErrorDetailText"></pre>
+          </details>
+        </div>
+
+        <div class="capacity-actions">
+          <span class="action-spacer"></span>
+          <button id="captionErrorOkButton" type="button">知道了</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
