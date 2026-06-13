@@ -455,7 +455,7 @@ const els = {
 };
 
 const pluginApiBase = "/api/plug/astrbot_plugin_smart_imagechat_hub";
-const PLUGIN_VERSION = "v2.8.1";
+const PLUGIN_VERSION = "v2.8.2";
 let bridge = window.AstrBotPluginPage || null;
 let bridgeReady = false;
 let bridgeUnavailable = false;
@@ -1807,10 +1807,36 @@ function scheduleLibraryRender(source = MANUAL_LIBRARY_SOURCE) {
   state.setResizeTimer(timer);
 }
 
+function fallbackVisibleLibraryWidth(listEl) {
+  for (const candidate of [
+    els.libraryList,
+    els.solidifiedLibraryList,
+    els.externalLibraryList,
+    els.imagebedLibraryList,
+  ]) {
+    if (!candidate || candidate === listEl) {
+      continue;
+    }
+    const width =
+      candidate.getBoundingClientRect().width || candidate.clientWidth || 0;
+    if (width > 0) {
+      return width;
+    }
+  }
+  return 0;
+}
+
 function getGalleryColumns(listEl = els.libraryList) {
-  const width = listEl.getBoundingClientRect().width || listEl.clientWidth || 0;
+  const width =
+    listEl.getBoundingClientRect().width ||
+    listEl.clientWidth ||
+    fallbackVisibleLibraryWidth(listEl);
   if (!width) {
-    return 3;
+    const cachedColumns = Number.parseInt(
+      listEl.dataset.galleryColumns || "0",
+      10,
+    );
+    return cachedColumns > 0 ? cachedColumns : 3;
   }
   const cardMinWidth = 90;
   const gap = 12;
@@ -4304,7 +4330,11 @@ function normalizeModelFallbackProviderIds(rawIds) {
   );
   for (const rawId of Array.isArray(rawIds) ? rawIds : []) {
     const providerId = String(rawId || "").trim();
-    if (!providerId || seen.has(providerId) || !providerIds.has(providerId)) {
+    if (
+      !providerId ||
+      seen.has(providerId) ||
+      (providerIds.size > 0 && !providerIds.has(providerId))
+    ) {
       continue;
     }
     seen.add(providerId);

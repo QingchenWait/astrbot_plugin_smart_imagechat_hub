@@ -6,7 +6,7 @@ configuration semantics change.
 
 ## Version
 
-- Current plugin version: `v2.8.1`
+- Current plugin version: `v2.8.2`
 - AstrBot requirement: `>=4.24.2`
 - Main entry: `main.py`
 - Backend package: `backend/`
@@ -119,9 +119,11 @@ astrbot_plugin_smart_imagechat_hub/
   `priority_1`, `priority_2`, and `priority_3` as a compact ordering fallback
   when drag/reorder controls are unavailable.
 - `match_confidence_threshold`: Minimum LLM confidence accepted by retrieval.
-- `page_library_default_view_mode`: Page-only setting, not exposed in native
-  `_conf_schema.json`. It stores the initial list/gallery display mode for the
-  manual, solidified, and external image libraries when the Page is opened.
+- `page_library_default_view_mode`: Hidden native config field used by the Page
+  More Config dialog. It stores the initial list/gallery display mode for the
+  manual, solidified, external, and imagebed image libraries when the Page is
+  opened. Keeping the hidden schema entry prevents AstrBot config-integrity
+  cleanup from dropping the Page preference during plugin reloads.
 - `imagebed_import`: Page-only Cloudflare R2 imagebed import settings. Stores
   account, bucket, auth, prefix, size cap, and scheduled sync controls without
   adding a native WebUI config group. The same values are mirrored into
@@ -459,7 +461,10 @@ backup package version constant in sync with `PLUGIN_VERSION`:
   renders a responsive grid, top-right trash buttons, and a second-line detail
   row for the selected image. Gallery layout now clamps its per-row card count
   between 3 and 6 columns using `getGalleryColumns()`, which is width-driven
-  rather than CSS auto-flow based.
+  rather than CSS auto-flow based. When a hidden library panel temporarily
+  reports zero width, `getGalleryColumns()` reuses that list's cached
+  `data-gallery-columns` value to avoid a transient three-column render while
+  switching scopes.
 - The manual library and the solidified library now have separate local view
   modes, tag-search state, and selection state. `filteredLibraryImages()` checks
   `merged_tags`, `tags`, `auto_tags`, `manual_tags`, and selected global tags
@@ -745,7 +750,10 @@ The user search flow is deliberately lightweight:
 - `_migrate_model_fallback_config`, `_normalize_model_fallback_config`,
   `_model_fallback_config`, `_model_fallback_snapshot`, and
   `_refresh_model_fallback_schema`: Maintain the plugin fallback-provider
-  config, Page snapshot, and native WebUI priority select options.
+  config, Page snapshot, and native WebUI priority select options. Normalization
+  keeps saved provider ids when the current provider list is temporarily empty,
+  so service startup does not erase Page manual fallback priority settings
+  before providers finish loading.
 - `_migrate_imagebed_import_config`, `_imagebed_import_config`,
   `_normalize_imagebed_import_config`, `_set_imagebed_import_config`,
   `_imagebed_config_snapshot`, `_test_imagebed_connection`,

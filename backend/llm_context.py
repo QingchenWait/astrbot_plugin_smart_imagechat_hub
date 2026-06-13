@@ -55,7 +55,9 @@ class LLMContextMixin:
         deduped: list[str] = []
         seen: set[str] = set()
         for provider_id in provider_ids:
-            if provider_id in seen or provider_id not in available_provider_ids:
+            if provider_id in seen:
+                continue
+            if available_provider_ids and provider_id not in available_provider_ids:
                 continue
             seen.add(provider_id)
             deduped.append(provider_id)

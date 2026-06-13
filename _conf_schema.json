@@ -445,6 +445,16 @@
       }
     }
   },
+  "page_library_default_view_mode": {
+    "description": "内部字段：Plugin UI Page 图像库默认展示方式",
+    "type": "string",
+    "default": "list",
+    "options": [
+      "list",
+      "gallery"
+    ],
+    "invisible": true
+  },
   "use_custom_reply": {
     "description": "兼容旧版：找到图片后使用自定义文案",
     "type": "bool",

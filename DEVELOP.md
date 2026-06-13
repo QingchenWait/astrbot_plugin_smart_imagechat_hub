@@ -1,5 +1,18 @@
 # DEVELOP
 
+# v2.8.2
+
+- Fixed Page More Config persistence for `page_library_default_view_mode` by
+  adding it as an invisible native config schema field, so AstrBot schema
+  integrity cleanup no longer drops the Page setting during plugin reloads.
+- Fixed manual model-fallback provider priority persistence on service startup
+  by preserving saved provider ids when AstrBot has not exposed provider options
+  yet, instead of normalizing the list to empty during migration.
+- Reduced Page gallery flicker when switching library scopes by reusing the last
+  known gallery column count while a hidden library list reports zero width.
+- Bumped plugin metadata, runtime version, and Page backup-version constant to
+  `v2.8.2`.
+
 # v2.8.1
 
 - Added the `meme_combat.follow_pattern.distinct_users_required` option to both
