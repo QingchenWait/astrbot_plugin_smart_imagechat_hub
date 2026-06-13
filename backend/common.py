@@ -28,7 +28,7 @@ from quart import Response, jsonify, request, send_file
 
 
 PLUGIN_NAME = "astrbot_plugin_smart_imagechat_hub"
-PLUGIN_VERSION = "v2.8.2"
+PLUGIN_VERSION = "v2.8.3"
 SKIP_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_skip_proactive_emoji"
 PENDING_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_pending_proactive_emoji"
 PROACTIVE_EMOJI_DECISION_EXTRA_KEY = "smart_imagesender_proactive_emoji_decision"
@@ -99,6 +99,74 @@ def clear_auto_collection_plugin(plugin: Any) -> None:
 def get_auto_collection_plugin() -> Any | None:
     plugin_ref = _AUTO_COLLECTION_PLUGIN_REF
     return plugin_ref() if callable(plugin_ref) else None
+
+
+def _qq_id_candidates(value: Any, *, split_composite: bool = True) -> set[str]:
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    candidates = {text}
+    digit_parts = re.findall(r"\d+", text)
+    if text.isdigit() or split_composite or len(digit_parts) == 1:
+        candidates.update(part for part in digit_parts if len(part) >= 5)
+    return candidates
+
+
+def _normalize_qq_id_list(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str):
+        items = re.split(r"[\n,，、;；\s]+", raw)
+    else:
+        items = [raw]
+
+    qq_ids: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        candidates = re.findall(r"\d+", text) or [text]
+        for candidate in candidates:
+            qq_id = str(candidate or "").strip()
+            if qq_id and qq_id not in seen:
+                seen.add(qq_id)
+                qq_ids.append(qq_id)
+    return qq_ids
+
+
+def _raw_sender_user_id(raw_message: Any) -> Any:
+    if isinstance(raw_message, dict):
+        if raw_message.get("user_id") is not None:
+            return raw_message.get("user_id")
+        if raw_message.get("sender_id") is not None:
+            return raw_message.get("sender_id")
+        sender = raw_message.get("sender")
+        if isinstance(sender, dict):
+            return sender.get("user_id") or sender.get("id")
+    sender = getattr(raw_message, "sender", None)
+    return getattr(sender, "user_id", None) or getattr(sender, "id", None)
+
+
+def _event_sender_qq_candidates(event: AstrMessageEvent) -> set[str]:
+    message_obj = getattr(event, "message_obj", None)
+    sender = getattr(message_obj, "sender", None)
+    raw_message = getattr(message_obj, "raw_message", None)
+
+    authoritative: set[str] = set()
+    for value in (
+        getattr(sender, "user_id", None),
+        getattr(sender, "id", None),
+        _raw_sender_user_id(raw_message),
+    ):
+        authoritative.update(_qq_id_candidates(value))
+
+    candidates = set(authoritative)
+    sender_id = event.get_sender_id()
+    candidates.update(
+        _qq_id_candidates(sender_id, split_composite=not bool(authoritative))
+    )
+    return candidates
 
 
 AUTO_COLLECTION_QUEUE_MAXSIZE = 24
@@ -292,6 +360,14 @@ class AutoImageCollectionMessageFilter(filter.CustomFilter):
         images = [comp for comp in event.get_messages() if isinstance(comp, Image)]
         has_image = bool(images)
         if not has_image:
+            return False
+
+        ignored_sender_ids = set(
+            _normalize_qq_id_list(raw_cfg.get("ignored_sender_ids", []))
+        )
+        if ignored_sender_ids and (
+            _event_sender_qq_candidates(event) & ignored_sender_ids
+        ):
             return False
 
         if not plugin._auto_collection_has_fast_capacity(

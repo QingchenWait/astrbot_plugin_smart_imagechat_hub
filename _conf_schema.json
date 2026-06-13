@@ -244,6 +244,15 @@
         "type": "int",
         "default": 3
       },
+      "ignored_sender_ids": {
+        "description": "不触发收集的 QQ 号 (黑名单)",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "每项一个 QQ 号。插件不会收集他们在任意群聊中发送的图片。"
+      },
       "auto_reject_discarded": {
         "description": "自动拒绝曾经被丢弃过的图片",
         "type": "bool",

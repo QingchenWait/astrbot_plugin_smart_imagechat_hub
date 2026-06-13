@@ -1,5 +1,19 @@
 # DEVELOP
 
+# v2.8.3
+
+- Added `auto_image_collection.ignored_sender_ids`, a native WebUI and Page
+  auto-collection setting for QQ numbers whose images should never enter the
+  pending pool in any group.
+- The auto-collection filter now compares the blacklist against QQ id
+  candidates from `AstrMessageEvent.get_sender_id()`, `message_obj.sender`, and
+  platform `raw_message` sender fields so different group/session sender
+  formats are handled without affecting normal message processing.
+- Added a worker-side blacklist guard as a low-cost fallback for queued or
+  direct collection jobs.
+- Bumped plugin metadata, runtime version, and Page backup-version constant to
+  `v2.8.3`.
+
 # v2.8.2
 
 - Fixed Page More Config persistence for `page_library_default_view_mode` by

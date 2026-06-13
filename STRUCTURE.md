@@ -6,7 +6,7 @@ configuration semantics change.
 
 ## Version
 
-- Current plugin version: `v2.8.2`
+- Current plugin version: `v2.8.3`
 - AstrBot requirement: `>=4.24.2`
 - Main entry: `main.py`
 - Backend package: `backend/`
@@ -104,10 +104,12 @@ astrbot_plugin_smart_imagechat_hub/
   configured provider, then retrieves a semantically close library image.
 - `auto_image_collection`: Controls the Page and runtime auto-collection flow.
   Images are first stored in the pending pool, then moved into the solidified
-  library for captioning and retrieval. `auto_reject_discarded` optionally
-  records only pending-pool manual discards as SHA-256 digests and skips those
-  images during future collection. Runtime collection uses a bounded background
-  queue (`AUTO_COLLECTION_QUEUE_MAXSIZE`) so image bursts are skipped instead of
+  library for captioning and retrieval. `ignored_sender_ids` lists QQ numbers
+  whose images are not auto-collected in any group while their messages are
+  still processed normally. `auto_reject_discarded` optionally records only
+  pending-pool manual discards as SHA-256 digests and skips those images during
+  future collection. Runtime collection uses a bounded background queue
+  (`AUTO_COLLECTION_QUEUE_MAXSIZE`) so image bursts are skipped instead of
   accumulating work on AstrBot's message-processing path.
 - `scheduled_backup`: Controls daily automatic ZIP export, retention count, and
   the read-only list of stored backups.
@@ -373,6 +375,7 @@ Main sections in `pages/image-center-page/index.html`:
   same imagebed import dialog as the capabilities-panel button.
 - Auto-collection dialog: `autoCollectionButton`, `autoCollectionOverlay`,
   save/cancel buttons, and the auto-collection config inputs, including
+  `autoCollectionTtlInput`, `autoCollectionIgnoredSendersInput`, and
   `autoCollectionRejectDiscardedInput`.
 - External import dialog: `externalImportOverlay`, `externalImportTree`,
   `externalImportSelectedPath`, `externalImportStatHint`,
@@ -643,8 +646,10 @@ The user search flow is deliberately lightweight:
 - `AutoImageCollectionMessageFilter`: Lives in `backend/common.py` and reads the
   plugin-owned `auto_image_collection` config through the weak plugin reference,
   so the enable switch and source groups work even when AstrBot global config
-  changes elsewhere. The filter only performs lightweight capacity checks and
-  queue insertion.
+  changes elsewhere. The filter skips auto collection for QQ numbers listed in
+  `ignored_sender_ids` by matching sender candidates from `get_sender_id()`,
+  `message_obj.sender`, and platform `raw_message` fields. The filter only
+  performs lightweight sender/capacity checks and queue insertion.
 - `_auto_collection_worker_loop`, `_enqueue_auto_collection`, and
   `_resolve_collected_image_path`: Process auto-collected images off the event
   path. HTTP URLs are downloaded with short timeouts and size-bounded streaming;

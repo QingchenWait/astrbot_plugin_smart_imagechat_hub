@@ -18,6 +18,7 @@ from .common import (
     PLUGIN_NAME,
     Path,
     SUPPORTED_IMAGE_EXTS,
+    _qq_id_candidates,
     aiohttp,
     asyncio,
     logger,
@@ -297,6 +298,11 @@ class AutoCollectionMixin:
         if not group_id or group_id not in set(cfg.get("source_groups", [])):
             return
         sender_id = str(sender_id or "").strip()
+        ignored_sender_ids = set(cfg.get("ignored_sender_ids", []))
+        if ignored_sender_ids and (
+            _qq_id_candidates(sender_id) & ignored_sender_ids
+        ):
+            return
         if not images:
             return
         if not self._auto_collection_can_accept_new_item(auto_accept):

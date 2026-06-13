@@ -264,6 +264,9 @@ const els = {
     "autoCollectionPendingLimitInput",
   ),
   autoCollectionTtlInput: document.getElementById("autoCollectionTtlInput"),
+  autoCollectionIgnoredSendersInput: document.getElementById(
+    "autoCollectionIgnoredSendersInput",
+  ),
   autoCollectionAutoAcceptInput: document.getElementById(
     "autoCollectionAutoAcceptInput",
   ),
@@ -455,7 +458,7 @@ const els = {
 };
 
 const pluginApiBase = "/api/plug/astrbot_plugin_smart_imagechat_hub";
-const PLUGIN_VERSION = "v2.8.2";
+const PLUGIN_VERSION = "v2.8.3";
 let bridge = window.AstrBotPluginPage || null;
 let bridgeReady = false;
 let bridgeUnavailable = false;
@@ -4548,6 +4551,11 @@ function fillAutoCollectionDialog(config) {
     config.pending_pool_limit ?? 100,
   );
   els.autoCollectionTtlInput.value = String(config.pending_ttl_days ?? 3);
+  els.autoCollectionIgnoredSendersInput.value = Array.isArray(
+    config.ignored_sender_ids,
+  )
+    ? config.ignored_sender_ids.join("\n")
+    : "";
   els.autoCollectionAutoAcceptInput.checked = config.auto_accept === true;
   els.autoCollectionRejectDiscardedInput.checked =
     config.auto_reject_discarded === true;
@@ -4568,6 +4576,9 @@ function readAutoCollectionDialog() {
       0,
     ),
     pending_ttl_days: clampInt(els.autoCollectionTtlInput.value, 3, 0),
+    ignored_sender_ids: normalizeTags(
+      els.autoCollectionIgnoredSendersInput.value,
+    ),
     auto_accept: els.autoCollectionAutoAcceptInput.checked,
     auto_reject_discarded: els.autoCollectionRejectDiscardedInput.checked,
     solidified_library_limit: clampInt(

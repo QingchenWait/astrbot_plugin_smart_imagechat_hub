@@ -24,6 +24,7 @@ from .common import (
     TAG_CATEGORY_LABEL_TO_KEY,
     TAG_CATEGORY_PRESETS,
     USER_SEARCH_CONFIG_KEY,
+    _normalize_qq_id_list,
     asyncio,
     json,
     logger,
@@ -819,6 +820,7 @@ class CaptionLibraryMixin:
         source_groups = self._normalize_group_ids(raw.get("source_groups", []))
         if not source_groups:
             source_groups = self._normalize_group_ids(raw.get("group_ids", []))
+        ignored_sender_ids = _normalize_qq_id_list(raw.get("ignored_sender_ids", []))
         max_file_size_kb = self._to_int(raw.get("max_file_size_kb"), 1024)
         pending_pool_limit = self._to_int(raw.get("pending_pool_limit"), 100)
         pending_ttl_days = self._to_int(raw.get("pending_ttl_days"), 3)
@@ -837,6 +839,7 @@ class CaptionLibraryMixin:
                 False,
             ),
             "source_groups": source_groups,
+            "ignored_sender_ids": ignored_sender_ids,
             "max_file_size_kb": max(1, max_file_size_kb),
             "pending_pool_limit": max(0, pending_pool_limit),
             "pending_ttl_days": max(0, pending_ttl_days),

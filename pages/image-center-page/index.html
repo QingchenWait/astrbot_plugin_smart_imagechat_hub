@@ -738,6 +738,16 @@
 
             <div class="config-item">
               <div class="config-item-copy">
+                <label for="autoCollectionIgnoredSendersInput">不触发收集的 QQ 号 (黑名单)</label>
+                <p>每行一个 QQ 号。插件不会收集他们在任意群聊中发送的图片。</p>
+              </div>
+              <div class="config-item-control">
+                <textarea id="autoCollectionIgnoredSendersInput" rows="4" placeholder="每行一个 QQ 号"></textarea>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
                 <label for="autoCollectionRejectDiscardedInput">自动拒绝曾经被丢弃过的图片</label>
                 <p>开启后，会记录被 [待筛选图片池] 手动丢弃的图片信息；再次见到相同图片时直接跳过。</p>
               </div>
