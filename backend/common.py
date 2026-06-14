@@ -8,6 +8,7 @@ import re
 import shutil
 import tempfile
 import traceback
+import uuid
 import weakref
 import time
 import zipfile
@@ -26,9 +27,19 @@ from astrbot.core.agent.message import TextPart
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from quart import Response, jsonify, request, send_file
 
+try:
+    from astrbot.core.utils.media_utils import compress_image
+except Exception:  # pragma: no cover - depends on AstrBot runtime version
+    compress_image = None
+
+try:
+    from PIL import Image as PILImage
+except Exception:  # pragma: no cover - Pillow is provided by AstrBot
+    PILImage = None
+
 
 PLUGIN_NAME = "astrbot_plugin_smart_imagechat_hub"
-PLUGIN_VERSION = "v2.8.3"
+PLUGIN_VERSION = "v2.8.4"
 SKIP_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_skip_proactive_emoji"
 PENDING_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_pending_proactive_emoji"
 PROACTIVE_EMOJI_DECISION_EXTRA_KEY = "smart_imagesender_proactive_emoji_decision"

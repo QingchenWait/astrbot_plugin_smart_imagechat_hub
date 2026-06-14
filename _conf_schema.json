@@ -172,7 +172,7 @@
         "type": "string",
         "default": "",
         "options": [],
-        "hint": "可填写 AstrBot 系统配置中 [模型提供商] 的 provider id；留空或不可用时，继承 AstrBot 当前会话的模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 qwen3.6-flash。"
+        "hint": "可填写 AstrBot 系统配置中 [模型提供商] 的 provider id；留空或不可用时，继承 AstrBot 当前会话的模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 mimo-v2.5。"
       },
       "meme_only": {
         "description": "只选择表情包",
@@ -232,6 +232,12 @@
         "description": "单张图片尺寸上限 (KB)",
         "type": "int",
         "default": 1024
+      },
+      "filter_obvious_non_meme_images": {
+        "description": "自动过滤明显不是表情包的图片",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，插件会在不调用 LLM 的情况下，只读取图片文件头中的尺寸/比例信息，跳过明显的手机截图、桌面截图或高清照片。无法判定或可能是动图时会放行。"
       },
       "pending_pool_limit": {
         "description": "待筛选图片池存储数量上限",
@@ -360,7 +366,7 @@
             "type": "string",
             "default": "",
             "options": [],
-            "hint": "继承 AstrBot 系统配置中的模型提供商列表；留空或所选模型不可用时，继承 AstrBot 当前会话模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 qwen3.6-flash。"
+            "hint": "继承 AstrBot 系统配置中的模型提供商列表；留空或所选模型不可用时，继承 AstrBot 当前会话模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 mimo-v2.5。"
           }
         }
       }

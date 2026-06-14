@@ -326,7 +326,15 @@ class AutoCollectionMixin:
                 continue
             if not image_path:
                 continue
-            if not self._is_allowed_image(Path(image_path)):
+            source_path = Path(image_path)
+            if not self._is_allowed_image(source_path):
+                self._cleanup_auto_collection_temp_path(image_path)
+                continue
+            if (
+                cfg.get("filter_obvious_non_meme_images", True)
+                and self._is_obvious_non_meme_image(source_path)
+            ):
+                self._cleanup_auto_collection_temp_path(image_path)
                 continue
             try:
                 async with self._lock:
@@ -334,7 +342,7 @@ class AutoCollectionMixin:
                         break
                     known_digests = self._stored_image_digests_from_metadata()
                     pending_item = self._store_collected_image(
-                        Path(image_path),
+                        source_path,
                         group_id=group_id,
                         sender_id=sender_id,
                         max_size_kb=max_size_kb,
@@ -361,6 +369,177 @@ class AutoCollectionMixin:
 
         if accepted_any:
             self._start_caption_background_task()
+
+    def _is_obvious_non_meme_image(self, image_path: Path) -> bool:
+        info = self._auto_collection_image_header_info(image_path)
+        width = self._to_int(info.get("width"), 0)
+        height = self._to_int(info.get("height"), 0)
+        if bool(info.get("animated")) or width <= 0 or height <= 0:
+            return False
+
+        long_side = max(width, height)
+        short_side = min(width, height)
+        pixels = width * height
+        ratio = long_side / max(short_side, 1)
+
+        if ratio > 2.5:
+            return True
+        if pixels >= 1_600_000 and long_side >= 1600 and short_side >= 900:
+            return True
+        if height >= 1600 and width >= 900 and 1.7 <= height / max(width, 1) <= 2.4:
+            return True
+        if width >= 1600 and height >= 900 and 1.55 <= width / max(height, 1) <= 2.2:
+            return True
+        return long_side >= 1800 and short_side >= 500 and ratio >= 3.0
+
+    def _auto_collection_image_header_info(self, image_path: Path) -> dict[str, Any]:
+        try:
+            with open(image_path, "rb") as f:
+                data = f.read(64 * 1024)
+        except OSError:
+            return {}
+        if len(data) < 10:
+            return {}
+        try:
+            if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+                return {
+                    "format": "png",
+                    "width": int.from_bytes(data[16:20], "big"),
+                    "height": int.from_bytes(data[20:24], "big"),
+                    "animated": b"acTL" in data,
+                }
+            if data[:6] in {b"GIF87a", b"GIF89a"}:
+                return {
+                    "format": "gif",
+                    "width": int.from_bytes(data[6:8], "little"),
+                    "height": int.from_bytes(data[8:10], "little"),
+                    "animated": True,
+                }
+            if data.startswith(b"BM") and len(data) >= 26:
+                return self._bmp_header_info(data)
+            if data.startswith(b"\xff\xd8"):
+                return self._jpeg_header_info(data)
+            if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                return self._webp_header_info(data)
+        except Exception as exc:
+            logger.debug(
+                "astrbot_plugin_smart_imagechat_hub: failed to inspect collected image header: %s",
+                exc,
+            )
+        return {}
+
+    def _bmp_header_info(self, data: bytes) -> dict[str, Any]:
+        dib_size = int.from_bytes(data[14:18], "little")
+        if dib_size == 12 and len(data) >= 26:
+            width = int.from_bytes(data[18:20], "little")
+            height = int.from_bytes(data[20:22], "little")
+        elif len(data) >= 30:
+            width = int.from_bytes(data[18:22], "little", signed=True)
+            height = int.from_bytes(data[22:26], "little", signed=True)
+        else:
+            return {}
+        return {
+            "format": "bmp",
+            "width": abs(width),
+            "height": abs(height),
+            "animated": False,
+        }
+
+    def _jpeg_header_info(self, data: bytes) -> dict[str, Any]:
+        start_of_frame_markers = {
+            0xC0,
+            0xC1,
+            0xC2,
+            0xC3,
+            0xC5,
+            0xC6,
+            0xC7,
+            0xC9,
+            0xCA,
+            0xCB,
+            0xCD,
+            0xCE,
+            0xCF,
+        }
+        index = 2
+        while index + 4 <= len(data):
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            while index < len(data) and data[index] == 0xFF:
+                index += 1
+            if index >= len(data):
+                break
+            marker = data[index]
+            index += 1
+            if marker == 0xD9 or marker == 0xDA:
+                break
+            if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+                continue
+            if index + 2 > len(data):
+                break
+            segment_length = int.from_bytes(data[index : index + 2], "big")
+            if segment_length < 2:
+                break
+            if marker in start_of_frame_markers and index + 7 <= len(data):
+                return {
+                    "format": "jpeg",
+                    "width": int.from_bytes(data[index + 5 : index + 7], "big"),
+                    "height": int.from_bytes(data[index + 3 : index + 5], "big"),
+                    "animated": False,
+                }
+            index += segment_length
+        return {}
+
+    def _webp_header_info(self, data: bytes) -> dict[str, Any]:
+        index = 12
+        animated = False
+        while index + 8 <= len(data):
+            chunk_type = data[index : index + 4]
+            chunk_size = int.from_bytes(data[index + 4 : index + 8], "little")
+            payload = index + 8
+            chunk_end = payload + chunk_size
+            if chunk_end > len(data):
+                break
+            if chunk_type == b"VP8X" and chunk_size >= 10:
+                flags = data[payload]
+                return {
+                    "format": "webp",
+                    "width": int.from_bytes(data[payload + 4 : payload + 7], "little")
+                    + 1,
+                    "height": int.from_bytes(data[payload + 7 : payload + 10], "little")
+                    + 1,
+                    "animated": bool(flags & 0x02),
+                }
+            if chunk_type == b"VP8 " and chunk_size >= 10:
+                marker = data.find(b"\x9d\x01\x2a", payload, chunk_end)
+                if marker >= 0 and marker + 7 <= len(data):
+                    return {
+                        "format": "webp",
+                        "width": int.from_bytes(
+                            data[marker + 3 : marker + 5],
+                            "little",
+                        )
+                        & 0x3FFF,
+                        "height": int.from_bytes(
+                            data[marker + 5 : marker + 7],
+                            "little",
+                        )
+                        & 0x3FFF,
+                        "animated": animated,
+                    }
+            if chunk_type == b"VP8L" and chunk_size >= 5 and data[payload] == 0x2F:
+                bits = int.from_bytes(data[payload + 1 : payload + 5], "little")
+                return {
+                    "format": "webp",
+                    "width": (bits & 0x3FFF) + 1,
+                    "height": ((bits >> 14) & 0x3FFF) + 1,
+                    "animated": animated,
+                }
+            if chunk_type == b"ANIM":
+                animated = True
+            index = chunk_end + (chunk_size % 2)
+        return {}
 
     def _auto_collection_can_accept_new_item(self, auto_accept: bool) -> bool:
         cfg = self._auto_collection_config()

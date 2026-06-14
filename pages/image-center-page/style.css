@@ -547,6 +547,16 @@ select option.provider-warning-option {
   gap: 16px;
 }
 
+.upload-global-tags {
+  display: grid;
+  gap: 8px;
+}
+
+.upload-global-tags > label {
+  font-weight: 700;
+  color: #24364b;
+}
+
 .provider-warning-panel {
   width: min(720px, 100%);
 }

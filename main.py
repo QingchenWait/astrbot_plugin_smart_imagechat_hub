@@ -77,6 +77,8 @@ class SmartImageSenderPlugin(
         self.imagebed_import_state_path = self.data_dir / IMAGEBED_IMPORT_STATE_FILENAME
         self.imagebed_discarded_path = self.data_dir / IMAGEBED_IMPORT_DISCARDED_FILENAME
         self._lock = asyncio.Lock()
+        self._caption_provider_call_lock = asyncio.Lock()
+        self._last_caption_provider_call_at = 0.0
         self._caption_task: asyncio.Task | None = None
         self._caption_cleanup_tasks: set[asyncio.Task] = set()
         self._watch_task: asyncio.Task | None = None

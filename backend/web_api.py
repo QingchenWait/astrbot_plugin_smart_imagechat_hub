@@ -1164,6 +1164,9 @@ class WebApiMixin:
         if not content:
             return jsonify({"status": "error", "message": "Empty file"})
 
+        selected_global_tags = self._valid_global_tags(
+            payload.get("selected_global_tags", [])
+        )
         folder = self._config_file_folder(IMAGE_FILES_CONFIG_KEY)
         rel_path = self._unique_upload_rel_path(folder, filename)
         try:
@@ -1182,7 +1185,12 @@ class WebApiMixin:
                 {"status": "error", "message": f"Unsupported file type: {filename}"}
             )
 
-        await self._sync_library(caption_mode="background")
+        await self._sync_library(
+            caption_mode="background",
+            initial_global_tags_by_rel_path={rel_path: selected_global_tags}
+            if selected_global_tags
+            else None,
+        )
         return jsonify(
             {
                 "status": "ok",

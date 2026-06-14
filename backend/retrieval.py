@@ -363,6 +363,9 @@ class RetrievalMixin:
         category_labels = self._caption_category_labels()
         category_text = "、".join(category_labels) if category_labels else "基础图像内容"
         category_rules = self._caption_category_prompt_rules()
+        prepared_image_path, cleanup_paths = await self._prepare_caption_image_input(
+            image_path
+        )
         prompt = (
             "请为这张图片生成 5-7 个简短中文特征标签；如果图片中包含可辨认文字，"
             "再额外生成 1 个仅包含图片中文字内容的标签。\n"
@@ -374,15 +377,19 @@ class RetrievalMixin:
             "不要输出解释，不要输出 Markdown。"
         )
         try:
-            resp = await self._llm_generate_with_provider_fallback(
-                primary_provider_id=provider_id,
-                operation_name=f"image caption {image_path.name}",
-                timeout_seconds=18,
-                allow_no_provider=True,
-                prompt=prompt,
-                image_urls=[str(image_path)],
-                contexts=[],
-                system_prompt="",
+            resp = await self._run_image_caption_provider_request(
+                lambda: self._llm_generate_with_provider_fallback(
+                    primary_provider_id=provider_id,
+                    operation_name=f"image caption {image_path.name}",
+                    timeout_seconds=None,
+                    allow_no_provider=True,
+                    use_failure_cooldown=False,
+                    direct_provider_call=True,
+                    prompt=prompt,
+                    image_urls=[prepared_image_path],
+                    contexts=[],
+                    system_prompt="",
+                )
             )
             if resp is None:
                 logger.warning(
@@ -410,6 +417,13 @@ class RetrievalMixin:
                 f"Image caption generation failed for {image_path.name}: {exc}",
                 detail=detail,
             ) from exc
+        finally:
+            for temp_path in cleanup_paths:
+                try:
+                    if temp_path != image_path and temp_path.is_file():
+                        temp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def _search_query_profile(self, message: str) -> dict[str, Any]:
         terms = self._search_query_terms(message)

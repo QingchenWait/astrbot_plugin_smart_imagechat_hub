@@ -6,6 +6,7 @@ MODEL_FALLBACK_MODE_MANUAL = "manual"
 MODEL_FALLBACK_MAX_MANUAL_PROVIDERS = 8
 MODEL_PROVIDER_FAILURE_COOLDOWN_SECONDS = 90
 MODEL_PROVIDER_TIMEOUT_SECONDS = 18
+IMAGE_CAPTION_PROVIDER_MIN_INTERVAL_SECONDS = 1.0
 
 
 class LLMContextMixin:
@@ -158,11 +159,33 @@ class LLMContextMixin:
             failure_until = self._model_provider_failure_until
         failure_until[provider_id] = time.time() + MODEL_PROVIDER_FAILURE_COOLDOWN_SECONDS
 
+    async def _run_image_caption_provider_request(self, call_factory):
+        lock = getattr(self, "_caption_provider_call_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._caption_provider_call_lock = lock
+
+        async with lock:
+            try:
+                last_call_at = float(getattr(self, "_last_caption_provider_call_at", 0.0))
+            except (TypeError, ValueError):
+                last_call_at = 0.0
+            wait_seconds = IMAGE_CAPTION_PROVIDER_MIN_INTERVAL_SECONDS - (
+                time.monotonic() - last_call_at
+            )
+            if wait_seconds > 0:
+                await asyncio.sleep(wait_seconds)
+            try:
+                return await call_factory()
+            finally:
+                self._last_caption_provider_call_at = time.monotonic()
+
     async def _model_provider_candidate_ids(
         self,
         primary_provider_id: str = "",
         umo: str = "",
         use_current_when_primary_empty: bool = False,
+        use_failure_cooldown: bool = True,
     ) -> list[str]:
         available_provider_ids = self._available_chat_provider_ids()
         candidates: list[str] = []
@@ -174,7 +197,10 @@ class LLMContextMixin:
                 not normalized
                 or normalized in seen
                 or normalized not in available_provider_ids
-                or self._model_provider_is_temporarily_failed(normalized)
+                or (
+                    use_failure_cooldown
+                    and self._model_provider_is_temporarily_failed(normalized)
+                )
             ):
                 return
             seen.add(normalized)
@@ -211,13 +237,16 @@ class LLMContextMixin:
         contexts: list | None = None,
         system_prompt: str = "",
         operation_name: str = "llm request",
-        timeout_seconds: float = MODEL_PROVIDER_TIMEOUT_SECONDS,
+        timeout_seconds: float | None = MODEL_PROVIDER_TIMEOUT_SECONDS,
         allow_no_provider: bool = False,
+        use_failure_cooldown: bool = True,
+        direct_provider_call: bool = False,
     ):
         provider_ids = await self._model_provider_candidate_ids(
             primary_provider_id=primary_provider_id,
             umo=umo,
             use_current_when_primary_empty=use_current_when_primary_empty,
+            use_failure_cooldown=use_failure_cooldown,
         )
         if not provider_ids:
             if allow_no_provider:
@@ -227,16 +256,33 @@ class LLMContextMixin:
         last_exc: Exception | None = None
         for provider_id in provider_ids:
             try:
-                resp = await asyncio.wait_for(
-                    self.context.llm_generate(
+                if direct_provider_call:
+                    provider = self.context.get_provider_by_id(provider_id)
+                    if provider is None or not callable(
+                        getattr(provider, "text_chat", None)
+                    ):
+                        raise RuntimeError(f"provider {provider_id} is unavailable")
+                    llm_call = provider.text_chat(
+                        prompt=prompt,
+                        image_urls=image_urls,
+                        contexts=contexts if contexts is not None else [],
+                        system_prompt=system_prompt,
+                    )
+                else:
+                    llm_call = self.context.llm_generate(
                         chat_provider_id=provider_id,
                         prompt=prompt,
                         image_urls=image_urls,
                         contexts=contexts if contexts is not None else [],
                         system_prompt=system_prompt,
-                    ),
-                    timeout=max(1.0, float(timeout_seconds)),
-                )
+                    )
+                if timeout_seconds is None or self._to_float(timeout_seconds, 0.0) <= 0:
+                    resp = await llm_call
+                else:
+                    resp = await asyncio.wait_for(
+                        llm_call,
+                        timeout=max(1.0, float(timeout_seconds)),
+                    )
                 completion_text = str(getattr(resp, "completion_text", "") or "")
                 error_text = completion_text.lower()
                 if "[erro]" in error_text or "internal server error" in error_text:
@@ -246,12 +292,18 @@ class LLMContextMixin:
                 raise
             except Exception as exc:
                 last_exc = exc
-                self._mark_model_provider_failure(provider_id)
+                if use_failure_cooldown:
+                    self._mark_model_provider_failure(provider_id)
                 logger.warning(
                     "astrbot_plugin_smart_imagechat_hub: %s failed on provider %s: %s",
                     operation_name,
                     provider_id,
-                    exc,
+                    str(exc) or type(exc).__name__,
                 )
-        raise RuntimeError(f"All providers failed for {operation_name}: {last_exc}")
+        last_error = (
+            f"{type(last_exc).__name__}: {last_exc}"
+            if last_exc and str(last_exc)
+            else type(last_exc).__name__ if last_exc else "unknown error"
+        )
+        raise RuntimeError(f"All providers failed for {operation_name}: {last_error}")
 

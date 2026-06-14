@@ -29,6 +29,7 @@ const els = {
   uploadMessage: document.getElementById("uploadMessage"),
   uploadOverlay: document.getElementById("uploadOverlay"),
   uploadCloseButton: document.getElementById("uploadCloseButton"),
+  uploadGlobalTagChoices: document.getElementById("uploadGlobalTagChoices"),
   captionProviderInput: document.getElementById("captionProviderInput"),
   captionProviderWarning: document.getElementById("captionProviderWarning"),
   providerWarningOverlay: document.getElementById("providerWarningOverlay"),
@@ -260,6 +261,9 @@ const els = {
   autoCollectionMaxSizeInput: document.getElementById(
     "autoCollectionMaxSizeInput",
   ),
+  autoCollectionFilterNonMemeInput: document.getElementById(
+    "autoCollectionFilterNonMemeInput",
+  ),
   autoCollectionPendingLimitInput: document.getElementById(
     "autoCollectionPendingLimitInput",
   ),
@@ -315,6 +319,9 @@ const els = {
   ),
   memeCombatBattleProviderInput: document.getElementById(
     "memeCombatBattleProviderInput",
+  ),
+  memeCombatBattleProviderWarning: document.getElementById(
+    "memeCombatBattleProviderWarning",
   ),
   memeCombatMessage: document.getElementById("memeCombatMessage"),
   memeCombatSaveButton: document.getElementById("memeCombatSaveButton"),
@@ -458,7 +465,7 @@ const els = {
 };
 
 const pluginApiBase = "/api/plug/astrbot_plugin_smart_imagechat_hub";
-const PLUGIN_VERSION = "v2.8.3";
+const PLUGIN_VERSION = "v2.8.4";
 let bridge = window.AstrBotPluginPage || null;
 let bridgeReady = false;
 let bridgeUnavailable = false;
@@ -1022,13 +1029,14 @@ function readFileAsBase64(file) {
   });
 }
 
-async function uploadImageFile(file) {
+async function uploadImageFile(file, selectedGlobalTags = []) {
   const contentBase64 = await readFileAsBase64(file);
   return pluginApiPost("caption_upload_image", {
     filename: file.name || "image",
     mime_type: file.type || "",
     size: file.size || 0,
     content_base64: contentBase64,
+    selected_global_tags: selectedGlobalTags,
   });
 }
 
@@ -3991,6 +3999,7 @@ function closeCapacityWarningDialog(clearSelection = true) {
 
 async function openUploadDialog() {
   els.uploadMessage.textContent = "";
+  renderUploadGlobalTagChoices([]);
   els.uploadOverlay.classList.remove("is-hidden");
 }
 
@@ -4077,16 +4086,39 @@ function fillCaptionProviderSelect(config) {
   renderCaptionProviderWarning(selectedId);
 }
 
+function isQwenProviderId(providerId) {
+  return String(providerId || "").toLowerCase().includes("qwen");
+}
+
+const QWEN_CAPTION_SPEED_WARNING =
+  "Qwen \u6A21\u578B\u7684\u56FE\u7247\u8F6C\u8FF0\u901F\u5EA6\u53EF\u80FD\u8F83\u6162\u3002\u82E5\u6709\u5B9E\u65F6\u6027\u9700\u6C42\uFF0C\u8BF7\u4F7F\u7528\u5176\u4ED6\u6A21\u578B\u3002";
+const CAPTION_PROVIDER_MISSING_WARNING =
+  "\u9700\u8981\u9009\u62E9\u4E00\u4E2A\u652F\u6301\u56FE\u7247\u7406\u89E3\u7684\u53EF\u7528\u56FE\u7247\u8F6C\u8FF0\u6A21\u578B\u3002";
+
 function renderCaptionProviderWarning(providerId) {
   const missing = !String(providerId || "").trim();
+  const qwen = !missing && isQwenProviderId(providerId);
   els.captionProviderInput.classList.toggle("warning-select", missing);
-  els.captionProviderWarning.classList.toggle("is-hidden", !missing);
+  els.captionProviderWarning.classList.toggle("is-hidden", !missing && !qwen);
+  els.captionProviderWarning.textContent = qwen
+    ? QWEN_CAPTION_SPEED_WARNING
+    : CAPTION_PROVIDER_MISSING_WARNING;
 }
 
 function renderWarningCaptionProviderWarning(providerId) {
   const missing = !String(providerId || "").trim();
   els.warningCaptionProviderInput.classList.toggle("warning-select", missing);
   els.warningCaptionProviderHint.classList.toggle("is-hidden", !missing);
+}
+
+function renderMemeCombatBattleProviderWarning(providerId) {
+  if (!els.memeCombatBattleProviderWarning) {
+    return;
+  }
+  els.memeCombatBattleProviderWarning.classList.toggle(
+    "is-hidden",
+    !isQwenProviderId(providerId),
+  );
 }
 
 function fillProviderWarningDialog(config) {
@@ -4547,6 +4579,8 @@ function fillAutoCollectionDialog(config) {
     ? config.source_groups.join("\n")
     : "";
   els.autoCollectionMaxSizeInput.value = String(config.max_file_size_kb ?? 1024);
+  els.autoCollectionFilterNonMemeInput.checked =
+    config.filter_obvious_non_meme_images !== false;
   els.autoCollectionPendingLimitInput.value = String(
     config.pending_pool_limit ?? 100,
   );
@@ -4570,6 +4604,8 @@ function readAutoCollectionDialog() {
     include_in_features: els.autoCollectionIncludeInput.checked,
     source_groups: normalizeTags(els.autoCollectionGroupsInput.value),
     max_file_size_kb: clampInt(els.autoCollectionMaxSizeInput.value, 1024, 1),
+    filter_obvious_non_meme_images:
+      els.autoCollectionFilterNonMemeInput.checked,
     pending_pool_limit: clampInt(
       els.autoCollectionPendingLimitInput.value,
       100,
@@ -4638,6 +4674,7 @@ function fillMemeCombatDialog(config) {
     Array.isArray(config.provider_options) ? config.provider_options : [],
     battle.analysis_provider_id || "",
   );
+  renderMemeCombatBattleProviderWarning(els.memeCombatBattleProviderInput.value);
 }
 
 function readMemeCombatDialog() {
@@ -4849,6 +4886,41 @@ function renderGlobalTagChoices(selectedTags) {
 function selectedGlobalTags() {
   return Array.from(
     els.globalTagChoices.querySelectorAll("input[type='checkbox']:checked"),
+  ).map((input) => input.value);
+}
+
+function renderUploadGlobalTagChoices(selectedTags = []) {
+  if (!els.uploadGlobalTagChoices) {
+    return;
+  }
+  els.uploadGlobalTagChoices.replaceChildren();
+  if (!globalTags.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-text inline";
+    empty.textContent = "暂无公共特征标签。";
+    els.uploadGlobalTagChoices.appendChild(empty);
+    return;
+  }
+  for (const tag of globalTags) {
+    const label = document.createElement("label");
+    label.className = "global-tag-option";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = tag;
+    input.checked = selectedTags.includes(tag);
+    const text = document.createElement("span");
+    text.textContent = tag;
+    label.append(input, text);
+    els.uploadGlobalTagChoices.appendChild(label);
+  }
+}
+
+function selectedUploadGlobalTags() {
+  if (!els.uploadGlobalTagChoices) {
+    return [];
+  }
+  return Array.from(
+    els.uploadGlobalTagChoices.querySelectorAll("input[type='checkbox']:checked"),
   ).map((input) => input.value);
 }
 
@@ -5331,13 +5403,21 @@ async function uploadImages() {
   uploadedInThisPageSession = true;
   els.uploadButton.disabled = true;
   els.uploadInput.disabled = true;
+  const selectedGlobalTags = selectedUploadGlobalTags();
+  if (els.uploadGlobalTagChoices) {
+    els.uploadGlobalTagChoices
+      .querySelectorAll("input[type='checkbox']")
+      .forEach((input) => {
+        input.disabled = true;
+      });
+  }
   const uploaded = [];
   const errors = [];
   try {
     for (const [index, file] of files.entries()) {
       els.uploadMessage.textContent = `正在上传 ${index + 1}/${files.length}：${file.name}`;
       try {
-        const result = await uploadImageFile(file);
+        const result = await uploadImageFile(file, selectedGlobalTags);
         if (Array.isArray(result?.uploaded)) {
           uploaded.push(...result.uploaded);
         }
@@ -5366,6 +5446,13 @@ async function uploadImages() {
   } finally {
     els.uploadButton.disabled = false;
     els.uploadInput.disabled = false;
+    if (els.uploadGlobalTagChoices) {
+      els.uploadGlobalTagChoices
+        .querySelectorAll("input[type='checkbox']")
+        .forEach((input) => {
+          input.disabled = false;
+        });
+    }
   }
 }
 
@@ -5574,6 +5661,9 @@ els.uploadButton.addEventListener("click", uploadImages);
 els.uploadCloseButton.addEventListener("click", closeUploadDialog);
 els.captionProviderInput.addEventListener("change", () => {
   renderCaptionProviderWarning(els.captionProviderInput.value);
+});
+els.memeCombatBattleProviderInput.addEventListener("change", () => {
+  renderMemeCombatBattleProviderWarning(els.memeCombatBattleProviderInput.value);
 });
 els.warningCaptionProviderInput.addEventListener(
   "change",

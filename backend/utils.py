@@ -1,5 +1,7 @@
 from .common import (
     Any,
+    PILImage,
+    compress_image,
     Path,
     SUPPORTED_IMAGE_EXTS,
     USER_SEARCH_CONFIG_KEY,
@@ -7,10 +9,58 @@ from .common import (
     hashlib,
     json,
     re,
+    tempfile,
+    uuid,
 )
 
 
 class UtilityMixin:
+    async def _prepare_caption_image_input(
+        self,
+        image_path: Path,
+    ) -> tuple[str, list[Path]]:
+        prepared = str(image_path)
+        cleanup_paths: list[Path] = []
+        if not image_path.is_file():
+            return prepared, cleanup_paths
+
+        suffix = image_path.suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png"}:
+            if PILImage is None:
+                return prepared, cleanup_paths
+            try:
+                with PILImage.open(image_path) as img:
+                    frame = img.convert("RGB")
+                    temp_dir = Path(tempfile.gettempdir())
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    temp_path = (
+                        temp_dir
+                        / f"smart_imagechat_caption_{uuid.uuid4().hex}.jpg"
+                    )
+                    frame.save(temp_path, "JPEG", quality=92, optimize=True)
+                    frame.close()
+                    cleanup_paths.append(temp_path)
+                    prepared = str(temp_path)
+            except Exception:
+                return prepared, cleanup_paths
+
+        if compress_image is None:
+            return prepared, cleanup_paths
+        try:
+            compressed = await compress_image(
+                prepared,
+                max_size=1280,
+                quality=95,
+            )
+            if compressed and compressed != prepared:
+                compressed_path = Path(compressed)
+                if compressed_path.is_file():
+                    cleanup_paths.append(compressed_path)
+                    prepared = compressed
+        except Exception:
+            return prepared, cleanup_paths
+        return prepared, cleanup_paths
+
     def _loads_json_object(self, text: str) -> Any:
         text = (text or "").strip()
         if not text:

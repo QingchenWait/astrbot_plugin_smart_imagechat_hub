@@ -1,5 +1,44 @@
 # DEVELOP
 
+# v2.8.4
+
+- Fixed automatic image tag generation with OpenAI-compatible non-GPT providers
+  such as Qwen and MiMO by removing the plugin's extra 24-second hard timeout
+  from image-caption requests. Captioning now waits for AstrBot/provider-level
+  timeout and retry handling, matching AstrBot's native direct
+  `provider.text_chat(..., image_urls=[...])` image-caption flow.
+- Added a caption-only provider request lock with a 1-second minimum interval
+  between image-caption calls, reducing burst pressure on OpenAI-compatible
+  APIs when manual uploads, auto-collection, external imports, and imagebed
+  imports all feed the shared automatic tag-generation path.
+- Added caption-only image input preparation: non-JPEG/PNG files are converted
+  to a temporary JPEG preview when possible, large images are passed through
+  AstrBot's built-in image compression helper, and temporary files are cleaned
+  after the provider call.
+- Disabled short provider failure cooldown for automatic image captioning so a
+  transient image-caption failure does not make the next queued images skip the
+  selected provider for 90 seconds. Other plugin-owned LLM calls keep the
+  existing cooldown behavior.
+- Added Page warnings under the default image-caption provider and meme-combat
+  battle-analysis provider selectors when a Qwen provider is selected, noting
+  that Qwen image captioning may be slower for real-time use.
+- Added a manual-upload-only Page batch global-tag picker. Tags selected in
+  the upload dialog are written as `selected_global_tags` for every image in
+  that upload batch and remain separate from automatically generated tags.
+- Added `auto_image_collection.filter_obvious_non_meme_images`, a low-cost
+  local-only filter that rejects obvious screenshots and high-resolution
+  photos before digest/copy work begins, without calling LLMs or adding image
+  decoding dependencies.
+- The auto-collection flow now inspects image headers for width, height, and
+  animation hints from the resolved local file path, then skips only clearly
+  non-meme images while leaving unknown or animated inputs untouched. Static
+  images whose long side is more than 2.5x the short side are now treated as
+  screenshot-like long images and skipped.
+- Exposed the new setting in both the native `_conf_schema.json` and the Page
+  auto-collection dialog, keeping the Page and WebUI values synchronized.
+- Bumped plugin metadata, runtime version, and Page backup-version constant to
+  `v2.8.4`.
+
 # v2.8.3
 
 - Added `auto_image_collection.ignored_sender_ids`, a native WebUI and Page

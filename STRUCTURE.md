@@ -6,7 +6,7 @@ configuration semantics change.
 
 ## Version
 
-- Current plugin version: `v2.8.3`
+- Current plugin version: `v2.8.4`
 - AstrBot requirement: `>=4.24.2`
 - Main entry: `main.py`
 - Backend package: `backend/`
@@ -106,7 +106,10 @@ astrbot_plugin_smart_imagechat_hub/
   Images are first stored in the pending pool, then moved into the solidified
   library for captioning and retrieval. `ignored_sender_ids` lists QQ numbers
   whose images are not auto-collected in any group while their messages are
-  still processed normally. `auto_reject_discarded` optionally records only
+  still processed normally. `filter_obvious_non_meme_images` uses local image
+  header width/height/animation checks to skip obvious screenshots or
+  high-resolution photos before hashing/copying, without calling an LLM or
+  decoding full images. `auto_reject_discarded` optionally records only
   pending-pool manual discards as SHA-256 digests and skips those images during
   future collection. Runtime collection uses a bounded background queue
   (`AUTO_COLLECTION_QUEUE_MAXSIZE`) so image bursts are skipped instead of
@@ -143,7 +146,11 @@ message hooks stay in `main.py` and call methods supplied by backend mixins.
 - `backend/web_api.py`: Page and Web API route registration plus route handlers.
 - `backend/llm_context.py`: LLM persona request, conversation lookup helpers,
   model fallback config normalization, AstrBot fallback-provider discovery, and
-  timeout/cooldown wrapped LLM generation.
+  timeout/cooldown wrapped LLM generation. Image captioning can opt out of the
+  plugin-level short timeout and short provider-failure cooldown, use direct
+  provider calls, and pass through a caption-only request lock so automatic tag
+  generation follows AstrBot's native image-caption request path without
+  bursty compatible-provider calls.
 - `backend/config_schema.py`: JSON state load/save, config migration, and dynamic
   WebUI schema refresh.
 - `backend/caption_library.py`: library sync, caption background jobs, progress
@@ -169,11 +176,15 @@ message hooks stay in `main.py` and call methods supplied by backend mixins.
 - `backend/image_management.py`: per-image tag updates, global tags, deletion,
   and Page image item formatting.
 - `backend/retrieval.py`: local candidate ranking, LLM match/proactive emoji
-  prompts, result parsing, and reply rendering.
+  prompts, automatic image-caption requests, result parsing, and reply
+  rendering. `_caption_image` is the shared automatic tag-generation entry for
+  manual uploads, auto-collected solidified images, external imports, imagebed
+  imports, and recaptioning.
 - `backend/tagging.py`: tag extraction, merge/normalization, image type handling,
   and filename-derived fallback tags.
 - `backend/utils.py`: JSON extraction, path safety, upload filename creation,
-  stable image IDs/digests, config primitive readers, and scalar conversions.
+  stable image IDs/digests, caption-only temporary image input preparation,
+  config primitive readers, and scalar conversions.
 
 ## Web APIs
 
@@ -259,6 +270,9 @@ All routes are registered below `/api/plug/astrbot_plugin_smart_imagechat_hub/`.
 - `POST caption_update_tags`: Save one image's manual tags and selected global tags.
 - `POST caption_update_global_tags`: Save global reusable tags.
 - `POST caption_upload_image`: Upload one image through Page JSON payload.
+  Manual uploads may include `selected_global_tags`; valid entries are stored
+  on the new indexed image as global tags before background auto-captioning
+  starts, so they remain separate from generated `auto_tags`.
 - `GET/POST caption_provider_config`: Read/write default image caption provider.
 - `POST caption_delete_image`: Delete one indexed image and its file.
 - `GET caption_export_config`: Download ZIP backup. The response streams a
@@ -296,6 +310,9 @@ Main sections in `pages/image-center-page/index.html`:
   one line, and keep the yellow more-config button on the final row.
 - Global tags panel: `globalTagsInput`, `globalTagsPreview`,
   `globalTagsSaveButton`.
+- Upload dialog: `uploadInput`, `uploadButton`, and `uploadGlobalTagChoices`.
+  The global-tag choices are manual-upload-only batch checkboxes; selected
+  entries are sent with each uploaded image as `selected_global_tags`.
 - Library panel: `libraryTagSearchInput`, `libraryTagSearchClearButton`,
   `libraryList`, `libraryListModeButton`, `libraryGalleryModeButton`,
   `libraryUploadButton`, `emptyLibraryText`. The search row sits above the image
@@ -375,8 +392,15 @@ Main sections in `pages/image-center-page/index.html`:
   same imagebed import dialog as the capabilities-panel button.
 - Auto-collection dialog: `autoCollectionButton`, `autoCollectionOverlay`,
   save/cancel buttons, and the auto-collection config inputs, including
+  `autoCollectionMaxSizeInput`, `autoCollectionFilterNonMemeInput`,
   `autoCollectionTtlInput`, `autoCollectionIgnoredSendersInput`, and
   `autoCollectionRejectDiscardedInput`.
+- Tag category dialog: `captionProviderInput` selects the default image
+  caption provider, and `captionProviderWarning` shows either the missing-model
+  warning or the Qwen speed reminder when a Qwen-series provider is selected.
+- Meme combat dialog: `memeCombatBattleProviderInput` selects the battle quick
+  image semantic analysis provider, and `memeCombatBattleProviderWarning` shows
+  the Qwen speed reminder for Qwen-series selections.
 - External import dialog: `externalImportOverlay`, `externalImportTree`,
   `externalImportSelectedPath`, `externalImportStatHint`,
   `externalImportParentTagInput`, `externalImportStatButton`,
@@ -641,8 +665,9 @@ The user search flow is deliberately lightweight:
   `_scheduled_backup_download_api` expose the scheduled-backup surface. Backup
   metadata includes a `version` field parsed from the ZIP filename.
 - `_collect_images_from_event`: Enqueues image collection jobs for selected
-  groups. The worker stores accepted images in the pending pool and leaves them
-  outside retrieval until the user accepts them.
+  groups. The worker resolves each image to a local path, optionally applies the
+  local obvious-non-meme header filter, then stores accepted images in the
+  pending pool and leaves them outside retrieval until the user accepts them.
 - `AutoImageCollectionMessageFilter`: Lives in `backend/common.py` and reads the
   plugin-owned `auto_image_collection` config through the weak plugin reference,
   so the enable switch and source groups work even when AstrBot global config
@@ -655,6 +680,13 @@ The user search flow is deliberately lightweight:
   path. HTTP URLs are downloaded with short timeouts and size-bounded streaming;
   local files are used directly; other component forms fall back to
   `Image.convert_to_file_path()` behind a timeout.
+- `_is_obvious_non_meme_image`, `_auto_collection_image_header_info`,
+  `_jpeg_header_info`, `_webp_header_info`, and `_bmp_header_info`: Lightweight
+  auto-collection helpers that read a bounded file header to identify dimensions
+  and animation hints for PNG/JPEG/GIF/WebP/BMP. Unknown or animated images are
+  allowed through; only clear screenshot/photo-sized images are rejected. Static
+  images with `long_side / short_side > 2.5` are rejected as screenshot-like
+  long images.
 - `_stored_image_digests(include_pending_pool=True)`: Builds the dedupe set for
   collection and, when needed, excludes the pending pool so batch accept does
   not self-conflict with the source pool.
@@ -733,10 +765,20 @@ The user search flow is deliberately lightweight:
   are restored to `pending` even if the caption worker is cancelled while
   waiting on the plugin lock.
 - `_caption_image`: Calls the configured image caption provider through the
-  shared provider fallback chain. Provider exceptions, timeouts, or AstrBot
-  `[ERRO]`/500 response text try the next configured fallback provider before a
-  `CaptionGenerationError` is raised; if no provider is available it returns
-  filename-derived fallback tags instead of blocking.
+  shared provider fallback chain while using direct `provider.text_chat` calls,
+  matching AstrBot's native image-caption path. Before the request,
+  `_prepare_caption_image_input` may convert GIF/WebP/BMP or other supported
+  non-JPEG/PNG files to a temporary JPEG preview and pass large images through
+  AstrBot's built-in image compressor; temporary files are removed after the
+  call. Caption requests opt out of the plugin-level hard timeout so they
+  inherit the AstrBot provider's own timeout/retry behavior, and
+  `_run_image_caption_provider_request` serializes caption provider calls with a
+  one-second minimum interval. They also opt out of the short provider-failure
+  cooldown so an intermittent compatible-provider failure does not make the
+  next queued images skip the selected provider. Provider exceptions, timeouts,
+  or AstrBot `[ERRO]`/500 response text still try configured fallback providers
+  before a `CaptionGenerationError` is raised; if no provider is available it
+  returns filename-derived fallback tags instead of blocking.
 - `_reset_all_caption_tags_for_new_categories`: Clears auto/manual tags for full
   recaption after category changes.
 
@@ -771,7 +813,10 @@ The user search flow is deliberately lightweight:
   order is primary provider, current session provider when the feature inherits
   current chat, manual plugin fallback providers when enabled, then AstrBot
   `fallback_chat_models`. Failed providers are cooled down briefly and every
-  call is wrapped in a bounded timeout.
+  normal plugin-owned call is wrapped in a bounded timeout. Passing
+  `timeout_seconds=None` or `<= 0` disables the plugin-level `wait_for` wrapper,
+  which is used only by automatic image captioning so provider-native timeout
+  and retry behavior is preserved.
 - `_plugin_config_snapshot`, `_update_plugin_config_from_payload`: Page config
   IO. They include the Page-only `imagebed_import` snapshot and restart the
   imagebed sync task when the payload changes.

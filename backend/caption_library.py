@@ -39,8 +39,10 @@ class CaptionLibraryMixin:
         self,
         force: bool = False,
         caption_mode: str = "background",
+        initial_global_tags_by_rel_path: dict[str, list[str]] | None = None,
     ) -> None:
         async with self._lock:
+            initial_global_tags_by_rel_path = initial_global_tags_by_rel_path or {}
             configured_rel_paths = self._configured_image_rel_paths()
             discovered_rel_paths = self._discover_uploaded_images()
             configured_tag_items = self._configured_tag_items()
@@ -154,7 +156,9 @@ class CaptionLibraryMixin:
                 else:
                     manual_tags = []
                     manual_override = False
-                    selected_global_tags = []
+                    selected_global_tags = self._valid_global_tags(
+                        initial_global_tags_by_rel_path.get(rel_path, [])
+                    )
 
                 needs_caption = (
                     not isinstance(item, dict)
@@ -840,6 +844,10 @@ class CaptionLibraryMixin:
             ),
             "source_groups": source_groups,
             "ignored_sender_ids": ignored_sender_ids,
+            "filter_obvious_non_meme_images": self._to_bool(
+                raw.get("filter_obvious_non_meme_images"),
+                True,
+            ),
             "max_file_size_kb": max(1, max_file_size_kb),
             "pending_pool_limit": max(0, pending_pool_limit),
             "pending_ttl_days": max(0, pending_ttl_days),
