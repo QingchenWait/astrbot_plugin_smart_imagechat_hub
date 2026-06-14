@@ -19,6 +19,10 @@
   transient image-caption failure does not make the next queued images skip the
   selected provider for 90 seconds. Other plugin-owned LLM calls keep the
   existing cooldown behavior.
+- Restored proactive emoji analysis to AstrBot/provider-level timeout handling
+  by removing its plugin-side 12-second `asyncio.wait_for` wrapper, preventing
+  normal providers from being prematurely marked failed during active emoji
+  replies.
 - Added Page warnings under the default image-caption provider and meme-combat
   battle-analysis provider selectors when a Qwen provider is selected, noting
   that Qwen image captioning may be slower for real-time use.

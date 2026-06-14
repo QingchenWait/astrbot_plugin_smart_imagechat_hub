@@ -287,7 +287,7 @@ class RetrievalMixin:
             umo=event.unified_msg_origin,
             use_current_when_primary_empty=True,
             operation_name="proactive emoji analysis",
-            timeout_seconds=12,
+            timeout_seconds=None,
             prompt=prompt,
             contexts=[],
             system_prompt=(

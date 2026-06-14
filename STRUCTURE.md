@@ -177,7 +177,9 @@ message hooks stay in `main.py` and call methods supplied by backend mixins.
   and Page image item formatting.
 - `backend/retrieval.py`: local candidate ranking, LLM match/proactive emoji
   prompts, automatic image-caption requests, result parsing, and reply
-  rendering. `_caption_image` is the shared automatic tag-generation entry for
+  rendering. `_analyze_proactive_emoji` uses AstrBot/provider-level timeout
+  handling so active emoji replies are not cut off by a plugin-side hard
+  timeout. `_caption_image` is the shared automatic tag-generation entry for
   manual uploads, auto-collected solidified images, external imports, imagebed
   imports, and recaptioning.
 - `backend/tagging.py`: tag extraction, merge/normalization, image type handling,
@@ -815,8 +817,8 @@ The user search flow is deliberately lightweight:
   `fallback_chat_models`. Failed providers are cooled down briefly and every
   normal plugin-owned call is wrapped in a bounded timeout. Passing
   `timeout_seconds=None` or `<= 0` disables the plugin-level `wait_for` wrapper,
-  which is used only by automatic image captioning so provider-native timeout
-  and retry behavior is preserved.
+  which is used by automatic image captioning and proactive emoji analysis so
+  provider-native timeout and retry behavior is preserved.
 - `_plugin_config_snapshot`, `_update_plugin_config_from_payload`: Page config
   IO. They include the Page-only `imagebed_import` snapshot and restart the
   imagebed sync task when the payload changes.
