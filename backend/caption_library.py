@@ -20,6 +20,7 @@ from .common import (
     PROACTIVE_EMOJI_CONFIG_KEY,
     PROGRESS_PAGE_PATH,
     SCHEDULED_BACKUP_CONFIG_KEY,
+    SEND_IMAGE_STYLE_CONFIG_KEY,
     TAG_CATEGORY_CONFIG_KEY,
     TAG_CATEGORY_LABEL_TO_KEY,
     TAG_CATEGORY_PRESETS,
@@ -612,6 +613,7 @@ class CaptionLibraryMixin:
             AUTO_COLLECTION_CONFIG_KEY: self._auto_collection_config(),
             IMAGEBED_IMPORT_CONFIG_KEY: self._imagebed_config_snapshot(),
             MEME_COMBAT_CONFIG_KEY: self._meme_combat_config(),
+            SEND_IMAGE_STYLE_CONFIG_KEY: self._send_image_style_config(),
             SCHEDULED_BACKUP_CONFIG_KEY: self._scheduled_backup_config(),
             MODEL_FALLBACK_CONFIG_KEY: self._model_fallback_snapshot(),
             "request_keywords": self._request_keywords(),
@@ -664,6 +666,11 @@ class CaptionLibraryMixin:
         if isinstance(raw_meme_combat_cfg, dict):
             self.config[MEME_COMBAT_CONFIG_KEY] = (
                 self._normalize_meme_combat_config(raw_meme_combat_cfg)
+            )
+        raw_send_image_style_cfg = payload.get(SEND_IMAGE_STYLE_CONFIG_KEY)
+        if isinstance(raw_send_image_style_cfg, dict):
+            self.config[SEND_IMAGE_STYLE_CONFIG_KEY] = (
+                self._normalize_send_image_style_config(raw_send_image_style_cfg)
             )
         raw_user_search_cfg = payload.get(USER_SEARCH_CONFIG_KEY)
         if isinstance(raw_user_search_cfg, dict):
@@ -818,6 +825,18 @@ class CaptionLibraryMixin:
         return self._normalize_scheduled_backup_config(
             self.config.get(SCHEDULED_BACKUP_CONFIG_KEY, {})
         )
+
+    def _send_image_style_config(self) -> dict[str, Any]:
+        return self._normalize_send_image_style_config(
+            self.config.get(SEND_IMAGE_STYLE_CONFIG_KEY, {})
+        )
+
+    def _normalize_send_image_style_config(self, raw: Any) -> dict[str, Any]:
+        raw = raw if isinstance(raw, dict) else {}
+        return {
+            "enabled": self._to_bool(raw.get("enabled"), True),
+            "meme_tag_only": self._to_bool(raw.get("meme_tag_only"), False),
+        }
 
     def _normalize_auto_collection_config(self, raw: Any) -> dict[str, Any]:
         raw = raw if isinstance(raw, dict) else {}

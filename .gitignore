@@ -1,0 +1,76 @@
+# -----------------------------
+# Codex / local agent settings
+# -----------------------------
+# Ignore Codex project instructions and custom sub-agents.
+# Remove AGENTS.md from this list if you want to share project-level Codex rules with collaborators.
+AGENTS.md
+INITIAL_PROMPT.txt
+.codex/
+.codex/agents/
+.codex/config.toml
+
+# -----------------------------
+# Local AstrBot / upstream source
+# -----------------------------
+# Common local clone path for AstrBot source used only for debugging.
+astrbot-upstream/
+AstrBot/
+.codex/astrbot-upstream/
+
+# -----------------------------
+# Python virtual environments
+# -----------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# -----------------------------
+# Python cache / build artifacts
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# -----------------------------
+# Local IDE / editor files
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -----------------------------
+# OS files
+# -----------------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------------
+# Logs / temp files
+# -----------------------------
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# -----------------------------
+# Local config / secrets
+# -----------------------------
+.env
+.env.*
+!.env.example
+*.local
+secrets.*

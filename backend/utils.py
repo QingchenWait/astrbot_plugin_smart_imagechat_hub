@@ -1,5 +1,7 @@
 from .common import (
     Any,
+    logger,
+    PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY,
     PILImage,
     compress_image,
     Path,
@@ -91,6 +93,192 @@ class UtilityMixin:
 
     def _is_allowed_image(self, path: Path) -> bool:
         return path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTS
+
+    def _is_gif_file_content(self, image_path: Path) -> bool:
+        try:
+            with image_path.open("rb") as f:
+                return f.read(6) in {b"GIF87a", b"GIF89a"}
+        except Exception:
+            return False
+
+    def _should_convert_send_image_to_gif(
+        self,
+        image_path: Path,
+        tags: list[str] | None,
+        *,
+        ignore_tag_gate: bool = False,
+    ) -> bool:
+        cfg = self._send_image_style_config()
+        if not cfg.get("enabled"):
+            return False
+        if not image_path.is_file():
+            return False
+        suffix = image_path.suffix.lower()
+        if (
+            suffix == ".gif"
+            or suffix not in SUPPORTED_IMAGE_EXTS
+            or self._is_gif_file_content(image_path)
+        ):
+            return False
+        if cfg.get("meme_tag_only") and not ignore_tag_gate:
+            return "表情包" in {str(tag or "").strip() for tag in tags or []}
+        return True
+
+    async def _prepare_send_image_path(
+        self,
+        image_path: Path,
+        tags: list[str] | None = None,
+        *,
+        ignore_tag_gate: bool = False,
+    ) -> tuple[Path, list[Path]]:
+        cleanup_paths: list[Path] = []
+        if not self._should_convert_send_image_to_gif(
+            image_path,
+            tags,
+            ignore_tag_gate=ignore_tag_gate,
+        ):
+            return image_path, cleanup_paths
+        if PILImage is None:
+            logger.warning(
+                "astrbot_plugin_smart_imagechat_hub: Pillow is unavailable; skipped send image GIF conversion."
+            )
+            return image_path, cleanup_paths
+        try:
+            converted = await asyncio.to_thread(
+                self._convert_static_image_to_one_frame_gif,
+                image_path,
+            )
+        except Exception as exc:
+            logger.warning(
+                "astrbot_plugin_smart_imagechat_hub: failed to convert send image to GIF, using original: %s",
+                exc,
+                exc_info=True,
+            )
+            return image_path, cleanup_paths
+        if converted != image_path:
+            cleanup_paths.append(converted)
+        return converted, cleanup_paths
+
+    def _convert_static_image_to_one_frame_gif(self, source: Path) -> Path:
+        if PILImage is None:
+            return source
+        temp_dir = self.data_dir / "send_image_style_cache"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        target = temp_dir / f"send_image_style_{uuid.uuid4().hex}.gif"
+        try:
+            with PILImage.open(source) as img:
+                img.seek(0)
+                frame = img.copy()
+            try:
+                if frame.mode in {"RGBA", "LA"} or (
+                    frame.mode == "P" and "transparency" in frame.info
+                ):
+                    rgba = frame.convert("RGBA")
+                    background = PILImage.new("RGBA", rgba.size, (255, 255, 255, 255))
+                    background.alpha_composite(rgba)
+                    frame.close()
+                    rgba.close()
+                    frame = background.convert("RGB")
+                    background.close()
+                elif frame.mode != "RGB":
+                    converted = frame.convert("RGB")
+                    frame.close()
+                    frame = converted
+                frame.save(target, format="GIF", save_all=False)
+            finally:
+                frame.close()
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        return target
+
+    def _cleanup_temp_paths(self, paths: list[Path]) -> None:
+        for path in paths:
+            try:
+                path.unlink(missing_ok=True)
+            except Exception as exc:
+                logger.debug(
+                    "astrbot_plugin_smart_imagechat_hub: failed to cleanup temp file %s: %s",
+                    path,
+                    exc,
+                )
+
+    def _defer_send_image_style_cleanup(
+        self,
+        event: Any,
+        cleanup_paths: list[Path],
+    ) -> list[Path]:
+        if not cleanup_paths:
+            return []
+        cleanup_paths = self._untracked_send_image_style_paths(event, cleanup_paths)
+        if not cleanup_paths:
+            return []
+        get_extra = getattr(event, "get_extra", None)
+        set_extra = getattr(event, "set_extra", None)
+        if not callable(get_extra) or not callable(set_extra):
+            return cleanup_paths
+        pending = get_extra(PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY)
+        if not isinstance(pending, list):
+            pending = []
+        existing = {str(item) for item in pending}
+        for path in cleanup_paths:
+            path_text = str(path)
+            if path_text not in existing:
+                pending.append(path_text)
+                existing.add(path_text)
+        set_extra(PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY, pending)
+        return []
+
+    def _cleanup_deferred_send_image_style_paths(self, event: Any) -> None:
+        get_extra = getattr(event, "get_extra", None)
+        set_extra = getattr(event, "set_extra", None)
+        if not callable(get_extra) or not callable(set_extra):
+            return
+        pending = get_extra(PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY)
+        if not isinstance(pending, list):
+            return
+        set_extra(PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY, None)
+        self._cleanup_temp_paths([Path(str(path)) for path in pending if str(path)])
+
+    def _cleanup_or_track_send_image_style_paths(
+        self,
+        event: Any,
+        cleanup_paths: list[Path],
+    ) -> None:
+        self._cleanup_temp_paths(
+            self._defer_send_image_style_cleanup(event, cleanup_paths)
+        )
+
+    def _untracked_send_image_style_paths(
+        self,
+        event: Any,
+        cleanup_paths: list[Path],
+    ) -> list[Path]:
+        if not cleanup_paths:
+            return []
+        track_temp_file = getattr(event, "track_temporary_local_file", None)
+        if not callable(track_temp_file):
+            return cleanup_paths
+        untracked: list[Path] = []
+        for path in cleanup_paths:
+            try:
+                track_temp_file(str(path))
+            except Exception as exc:
+                logger.debug(
+                    "astrbot_plugin_smart_imagechat_hub: failed to track temp send image %s: %s",
+                    path,
+                    exc,
+                )
+                untracked.append(path)
+        return untracked
+
+    def _tags_for_library_path(self, image_path: Path) -> list[str]:
+        try:
+            rel_path = image_path.resolve().relative_to(self.data_dir.resolve()).as_posix()
+        except ValueError:
+            return []
+        item = self._index_image_by_id(self._image_id(rel_path))
+        return self._tags_from_item(item) if item else []
 
     def _abs_plugin_data_path(self, rel_path: str) -> Path:
         root = self.data_dir.resolve()

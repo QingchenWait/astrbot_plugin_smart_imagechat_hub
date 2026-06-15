@@ -339,6 +339,12 @@ const els = {
   configLibraryDefaultViewModeInput: document.getElementById(
     "configLibraryDefaultViewModeInput",
   ),
+  sendImageStyleEnabledInput: document.getElementById(
+    "sendImageStyleEnabledInput",
+  ),
+  sendImageStyleMemeTagOnlyInput: document.getElementById(
+    "sendImageStyleMemeTagOnlyInput",
+  ),
   scheduledBackupEnabledInput: document.getElementById(
     "scheduledBackupEnabledInput",
   ),
@@ -465,7 +471,7 @@ const els = {
 };
 
 const pluginApiBase = "/api/plug/astrbot_plugin_smart_imagechat_hub";
-const PLUGIN_VERSION = "v2.8.4";
+const PLUGIN_VERSION = "v2.8.5";
 let bridge = window.AstrBotPluginPage || null;
 let bridgeReady = false;
 let bridgeUnavailable = false;
@@ -4821,6 +4827,10 @@ function fillConfigDialog(config) {
   ).toFixed(2);
   els.configLibraryDefaultViewModeInput.value =
     config.page_library_default_view_mode === "gallery" ? "gallery" : "list";
+  const sendImageStyle = config.send_image_style || {};
+  els.sendImageStyleEnabledInput.checked = sendImageStyle.enabled !== false;
+  els.sendImageStyleMemeTagOnlyInput.checked =
+    sendImageStyle.meme_tag_only === true;
   const backupConfig = config.scheduled_backup || scheduledBackupState;
   scheduledBackupState = {
     ...scheduledBackupState,
@@ -4847,6 +4857,10 @@ function readConfigDialog() {
       els.configLibraryDefaultViewModeInput.value === "gallery"
         ? "gallery"
         : "list",
+    send_image_style: {
+      enabled: els.sendImageStyleEnabledInput.checked,
+      meme_tag_only: els.sendImageStyleMemeTagOnlyInput.checked,
+    },
     scheduled_backup: {
       enabled: els.scheduledBackupEnabledInput.checked,
       backup_time: normalizeBackupTime(els.scheduledBackupTimeInput.value),

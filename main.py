@@ -109,6 +109,7 @@ class SmartImageSenderPlugin(
         self._migrate_progress_link_config()
         self._migrate_auto_collection_config()
         self._migrate_meme_combat_config()
+        self._migrate_send_image_style_config()
         self._migrate_scheduled_backup_config()
         self._migrate_model_fallback_config()
         self._migrate_imagebed_import_config()
@@ -247,41 +248,50 @@ class SmartImageSenderPlugin(
             event.stop_event()
             return
 
-        if self._cfg_bool("use_custom_reply"):
-            reply_text = self._render_custom_reply(image_item, decision)
-            chain = []
-            if reply_text:
-                chain.append(Plain(reply_text))
-            chain.append(Image.fromFileSystem(str(image_path)))
-            yield event.chain_result(chain)
-            await self._after_plugin_sent_image_for_meme_combat(
-                event,
-                str(image_path),
-                source="user_search",
-                defer_burst=True,
-            )
-        else:
-            request = await self._request_llm_with_persona(
-                event,
-                self._found_prompt(message, image_item, decision),
-            )
-            request.extra_user_content_parts.append(
-                TextPart(
-                    text=(
-                        "<astrbot_plugin_smart_imagechat_hub>"
-                        "已匹配到本地图片，系统会在回复后发送图片。"
-                        "</astrbot_plugin_smart_imagechat_hub>"
+        image_tags = self._tags_from_item(image_item)
+        send_image_path, cleanup_paths = await self._prepare_send_image_path(
+            image_path,
+            image_tags,
+        )
+        cleanup_paths = self._defer_send_image_style_cleanup(event, cleanup_paths)
+        try:
+            if self._cfg_bool("use_custom_reply"):
+                reply_text = self._render_custom_reply(image_item, decision)
+                chain = []
+                if reply_text:
+                    chain.append(Plain(reply_text))
+                chain.append(Image.fromFileSystem(str(send_image_path)))
+                yield event.chain_result(chain)
+                await self._after_plugin_sent_image_for_meme_combat(
+                    event,
+                    str(image_path),
+                    source="user_search",
+                    defer_burst=True,
+                )
+            else:
+                request = await self._request_llm_with_persona(
+                    event,
+                    self._found_prompt(message, image_item, decision),
+                )
+                request.extra_user_content_parts.append(
+                    TextPart(
+                        text=(
+                            "<astrbot_plugin_smart_imagechat_hub>"
+                            "已匹配到本地图片，系统会在回复后发送图片。"
+                            "</astrbot_plugin_smart_imagechat_hub>"
+                        )
                     )
                 )
-            )
-            yield request
-            yield event.chain_result([Image.fromFileSystem(str(image_path))])
-            await self._after_plugin_sent_image_for_meme_combat(
-                event,
-                str(image_path),
-                source="user_search",
-                defer_burst=True,
-            )
+                yield request
+                yield event.chain_result([Image.fromFileSystem(str(send_image_path))])
+                await self._after_plugin_sent_image_for_meme_combat(
+                    event,
+                    str(image_path),
+                    source="user_search",
+                    defer_burst=True,
+                )
+        finally:
+            self._cleanup_temp_paths(cleanup_paths)
 
         event.stop_event()
 
@@ -293,6 +303,7 @@ class SmartImageSenderPlugin(
     async def after_message_sent(self, event: AstrMessageEvent):
         await self._send_pending_proactive_emoji(event)
         await self._send_pending_meme_combat_burst(event)
+        self._cleanup_deferred_send_image_style_paths(event)
 
     # This handler intentionally never activates; the custom filter performs
     # the collection side effect without waking the bot.

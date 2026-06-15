@@ -39,15 +39,19 @@ except Exception:  # pragma: no cover - Pillow is provided by AstrBot
 
 
 PLUGIN_NAME = "astrbot_plugin_smart_imagechat_hub"
-PLUGIN_VERSION = "v2.8.4"
+PLUGIN_VERSION = "v2.8.5"
 SKIP_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_skip_proactive_emoji"
 PENDING_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_pending_proactive_emoji"
 PROACTIVE_EMOJI_DECISION_EXTRA_KEY = "smart_imagesender_proactive_emoji_decision"
 PENDING_MEME_COMBAT_IMAGE_EXTRA_KEY = "smart_imagesender_pending_meme_combat_image"
+PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY = (
+    "smart_imagesender_pending_send_image_style_cleanup"
+)
 USER_SEARCH_EXPLICIT_WAKE_EXTRA_KEY = "smart_imagesender_explicit_user_search_wake"
 USER_SEARCH_CONFIG_KEY = "user_search_flow"
 AUTO_COLLECTION_CONFIG_KEY = "auto_image_collection"
 SCHEDULED_BACKUP_CONFIG_KEY = "scheduled_backup"
+SEND_IMAGE_STYLE_CONFIG_KEY = "send_image_style"
 MODEL_FALLBACK_CONFIG_KEY = "model_fallback_options"
 PAGE_LIBRARY_DEFAULT_VIEW_MODE_CONFIG_KEY = "page_library_default_view_mode"
 LIBRARY_BUILDER_CONFIG_KEY = "library_builder"

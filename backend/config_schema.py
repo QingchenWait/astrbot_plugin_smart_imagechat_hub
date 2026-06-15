@@ -9,6 +9,7 @@ from .common import (
     PROGRESS_LINK_CONFIG_KEY,
     PROGRESS_PAGE_CONFIG_VALUE,
     SCHEDULED_BACKUP_CONFIG_KEY,
+    SEND_IMAGE_STYLE_CONFIG_KEY,
     TAG_CATEGORY_CONFIG_KEY,
     json,
     logger,
@@ -162,6 +163,13 @@ class ConfigSchemaMixin:
         normalized = self._normalize_scheduled_backup_config(current)
         if current != normalized:
             self.config[SCHEDULED_BACKUP_CONFIG_KEY] = normalized
+            self._save_plugin_config()
+
+    def _migrate_send_image_style_config(self) -> None:
+        current = self.config.get(SEND_IMAGE_STYLE_CONFIG_KEY, {})
+        normalized = self._normalize_send_image_style_config(current)
+        if current != normalized:
+            self.config[SEND_IMAGE_STYLE_CONFIG_KEY] = normalized
             self._save_plugin_config()
 
     def _save_plugin_config(self) -> None:

@@ -222,8 +222,17 @@ class RetrievalMixin:
                 return
             image_path = self._abs_plugin_data_path(image_item["rel_path"])
             if image_path.is_file():
+                image_tags = self._tags_from_item(image_item)
                 if cfg["embed_in_conversation"]:
-                    result.chain.append(Image.fromFileSystem(str(image_path)))
+                    send_image_path, cleanup_paths = await self._prepare_send_image_path(
+                        image_path,
+                        image_tags,
+                    )
+                    cleanup_paths = self._defer_send_image_style_cleanup(
+                        event,
+                        cleanup_paths,
+                    )
+                    result.chain.append(Image.fromFileSystem(str(send_image_path)))
                     await self._after_plugin_sent_image_for_meme_combat(
                         event,
                         str(image_path),
@@ -250,8 +259,13 @@ class RetrievalMixin:
         image_path = Path(str(pending.get("image_path") or ""))
         if not image_path.is_file():
             return
+        send_image_path, cleanup_paths = await self._prepare_send_image_path(
+            image_path,
+            self._tags_for_library_path(image_path),
+        )
+        cleanup_paths = self._defer_send_image_style_cleanup(event, cleanup_paths)
         try:
-            await event.send(MessageEventResult().file_image(str(image_path)))
+            await event.send(MessageEventResult().file_image(str(send_image_path)))
             await self._after_plugin_sent_image_for_meme_combat(
                 event,
                 str(image_path),
@@ -263,6 +277,8 @@ class RetrievalMixin:
                 exc,
                 exc_info=True,
             )
+        finally:
+            self._cleanup_temp_paths(cleanup_paths)
 
     def _proactive_emoji_candidates(self, meme_only: bool) -> list[dict[str, Any]]:
         candidates = self._library_candidates()

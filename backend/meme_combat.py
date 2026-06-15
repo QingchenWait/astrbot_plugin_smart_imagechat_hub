@@ -527,6 +527,34 @@ class MemeCombatMixin:
             return None
         return None
 
+    async def _meme_combat_follow_send_path(
+        self,
+        item: dict[str, Any],
+    ) -> tuple[Path | None, list[Path]]:
+        cleanup_paths: list[Path] = []
+        existing_path = str(item.get("path") or "")
+        resolved_path = await self._meme_combat_resolve_item_path(item)
+        if not resolved_path:
+            return None, cleanup_paths
+        path = Path(resolved_path)
+        if not path.is_file():
+            return None, cleanup_paths
+        cleanup_resolved_path = True
+        if existing_path:
+            try:
+                cleanup_resolved_path = Path(existing_path).resolve() != path.resolve()
+            except OSError:
+                cleanup_resolved_path = True
+        if cleanup_resolved_path:
+            cleanup_paths.append(path)
+        prepared_path, style_cleanup_paths = await self._prepare_send_image_path(
+            path,
+            None,
+            ignore_tag_gate=True,
+        )
+        cleanup_paths.extend(style_cleanup_paths)
+        return prepared_path, cleanup_paths
+
     async def _send_meme_combat_item(
         self,
         event: AstrMessageEvent,
@@ -536,7 +564,19 @@ class MemeCombatMixin:
         reset_window: bool = True,
     ) -> bool:
         component = self._meme_combat_image_component(item)
+        original_path = str(item.get("path") or "")
+        cleanup_paths: list[Path] = []
+        if source == "follow_pattern":
+            prepared_path, cleanup_paths = await self._meme_combat_follow_send_path(
+                item,
+            )
+            if prepared_path is not None:
+                component = Image.fromFileSystem(str(prepared_path))
+                if not original_path:
+                    original_path = str(Path(str(item.get("path") or "")))
+            cleanup_paths = self._defer_send_image_style_cleanup(event, cleanup_paths)
         if component is None:
+            self._cleanup_temp_paths(cleanup_paths)
             return False
         try:
             result = MessageEventResult()
@@ -544,7 +584,7 @@ class MemeCombatMixin:
             await event.send(result)
             self._record_plugin_sent_image(
                 group_id,
-                str(item.get("path") or ""),
+                original_path,
                 source,
             )
             if reset_window:
@@ -559,6 +599,8 @@ class MemeCombatMixin:
                 exc_info=True,
             )
             return False
+        finally:
+            self._cleanup_temp_paths(cleanup_paths)
 
     def _meme_combat_fast_image_path(self, image: Image) -> str:
         path = self._local_image_component_path(image)
@@ -854,8 +896,13 @@ class MemeCombatMixin:
         path = Path(image_path)
         if not path.is_file():
             return False
+        send_path, cleanup_paths = await self._prepare_send_image_path(
+            path,
+            self._tags_for_library_path(path),
+        )
+        cleanup_paths = self._defer_send_image_style_cleanup(event, cleanup_paths)
         try:
-            await event.send(MessageEventResult().file_image(str(path)))
+            await event.send(MessageEventResult().file_image(str(send_path)))
             self._record_plugin_sent_image(group_id, str(path), source)
             if reset_window:
                 self._reset_meme_combat_group_after_bot_image(group_id)
@@ -869,6 +916,8 @@ class MemeCombatMixin:
                 exc_info=True,
             )
             return False
+        finally:
+            self._cleanup_temp_paths(cleanup_paths)
 
     def _record_plugin_sent_image(
         self,

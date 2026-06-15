@@ -372,6 +372,26 @@
       }
     }
   },
+  "send_image_style": {
+    "description": "🎞️ 发送表情包时统一样式 (GIF)",
+    "type": "object",
+    "default": {},
+    "hint": "开启后，插件在发送表情包时，会将非 GIF 图片转换为 1 帧 GIF (更贴近真实表情包样式)。不会改变图库中的图像格式，但高频发送大图可能会导致较高内存占用。",
+    "items": {
+      "enabled": {
+        "description": "开启发送表情包时统一样式",
+        "type": "bool",
+        "default": true,
+        "hint": "仅影响图库中图片的发送和智能斗图加入队形跟发；转换失败或运行环境缺少 Pillow 时会自动发送原图。"
+      },
+      "meme_tag_only": {
+        "description": "仅转换包含“表情包”标签的图库图片",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，只会转换标签集合里带“表情包”标签的图片，照片原图发送。(“加入队形”斗图功能不受此项限制)"
+      }
+    }
+  },
   "scheduled_backup": {
     "description": "🗄️ 定时备份",
     "type": "object",

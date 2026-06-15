@@ -1215,6 +1215,39 @@
           </section>
 
           <section class="config-section">
+            <div class="config-section-title">
+              <h3>🎞️ 发送表情包时统一样式 (GIF)</h3>
+              <p>开启后，插件在发送表情包时，会将非 GIF 图片转换为 1 帧 GIF (更贴近真实表情包样式)。不会改变图库中的图像格式，但高频发送大图可能会导致较高内存占用。</p>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="sendImageStyleEnabledInput">开启发送表情包时统一样式</label>
+                <p>仅影响图库中图片的发送和智能斗图加入队形跟发；保存、导入、打标和图片处理流程仍保留原格式。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="sendImageStyleEnabledInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="sendImageStyleMemeTagOnlyInput">仅转换包含“表情包”标签的图库图片</label>
+                <p>开启后，只会转换标签集合里带“表情包”标签的图片，照片原图发送。(“加入队形”斗图功能不受此项限制)</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="sendImageStyleMemeTagOnlyInput" type="checkbox" />
+                  <span> </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="config-section">
             <div class="config-section-title backup-section-title">
               <h3>🗄️ 定时备份</h3>
               <p>每天自动生成一份与导出配置相同格式的 ZIP 备份。</p>
