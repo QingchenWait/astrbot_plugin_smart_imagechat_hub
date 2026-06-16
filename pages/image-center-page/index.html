@@ -596,6 +596,21 @@
 
             <div class="config-item">
               <div class="config-item-copy">
+                <label for="proactiveEmojiRetrievalModeInput">表情包检索模式</label>
+                <p>串行模式依据 bot 生成回复内容检索，更准确；并发模式会同步进行回复生成+表情包检索，减少等待时间；本地精排+并发模式会先按标签库和强语义命中精排候选，速度最快。</p>
+              </div>
+              <div class="config-item-control">
+                <select id="proactiveEmojiRetrievalModeInput">
+                  <option value="bot_reply_serial">依据 bot 生成的回复内容，进行串行检索（更加准确）</option>
+                  <option value="user_message_parallel">依据用户发言内容，进行并发检索（速度更快）</option>
+                  <option value="user_message_fast_prefilter">依据发言内容本地精排，进行小规模并发检索（速度最快）</option>
+                </select>
+                <p id="proactiveEmojiRetrievalModeWarning" class="provider-warning is-hidden">注意：非 GPT 模型可能因 API 请求频率限制，导致串行检索速度偏慢。建议使用并发检索模式。</p>
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
                 <label for="proactiveEmojiMemeOnlyInput">只选择表情包</label>
                 <p>开启后，只从带“表情包”特征标签的图库图像中筛选。</p>
               </div>
@@ -631,6 +646,19 @@
                   type="text"
                   placeholder="0.25"
                 />
+              </div>
+            </div>
+
+            <div class="config-item">
+              <div class="config-item-copy">
+                <label for="proactiveEmojiDebugModeInput">调试模式</label>
+                <p>仅对主动表情包流程开启详细运行日志，用于排查 LLM 查询、接口调用和模型 API 报错状态。</p>
+              </div>
+              <div class="config-item-control">
+                <label class="switch-option">
+                  <input id="proactiveEmojiDebugModeInput" type="checkbox" />
+                  <span> </span>
+                </label>
               </div>
             </div>
           </section>

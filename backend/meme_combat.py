@@ -6,14 +6,18 @@ from .common import (
     MessageEventResult,
     PENDING_MEME_COMBAT_IMAGE_EXTRA_KEY,
     Path,
+    PILImage,
     Plain,
+    SEARCH_SELECTION_POOL_SIZE,
     SUPPORTED_IMAGE_EXTS,
     asyncio,
     json,
     logger,
     random,
+    tempfile,
     time,
     urlparse,
+    uuid,
 )
 
 
@@ -27,6 +31,8 @@ MEME_COMBAT_MAX_BATTLE_TASKS = 8
 MEME_COMBAT_HASH_PREFIX_BYTES = 128 * 1024
 MEME_COMBAT_QUEUE_MAXSIZE = 96
 MEME_COMBAT_LLM_TIMEOUT_SECONDS = 8
+MEME_COMBAT_ANALYSIS_IMAGE_MAX_EDGE = 768
+MEME_COMBAT_ANALYSIS_IMAGE_JPEG_QUALITY = 82
 
 
 class MemeCombatMixin:
@@ -749,10 +755,25 @@ class MemeCombatMixin:
                     break
             if len(image_paths) < 2:
                 return
+            provider_id = str(battle_cfg.get("analysis_provider_id") or "").strip()
+            provider_mode = (
+                "inherit"
+                if self._provider_id_inherits_current_chat_model(provider_id)
+                else "explicit"
+            )
+            logger.info(
+                "astrbot_plugin_smart_imagechat_hub: meme battle triggered: "
+                "group_id=%s candidate_sample_count=%d parsed_image_count=%d "
+                "provider_mode=%s",
+                group_id,
+                len(image_items),
+                len(image_paths),
+                provider_mode,
+            )
             profile_text = await self._analyze_meme_battle_images(
                 event,
                 image_paths,
-                str(battle_cfg.get("analysis_provider_id") or ""),
+                provider_id,
             )
             if not profile_text:
                 return
@@ -760,7 +781,6 @@ class MemeCombatMixin:
             if not ranked:
                 return
             try:
-                provider_id = str(battle_cfg.get("analysis_provider_id") or "").strip()
                 decision = await self._analyze_meme_battle_match(
                     event,
                     provider_id,
@@ -813,24 +833,402 @@ class MemeCombatMixin:
         image_paths: list[str],
         provider_id: str,
     ) -> str:
-        paths = [path for path in image_paths[:2] if Path(path).is_file()]
+        paths = [Path(path) for path in image_paths[:2] if Path(path).is_file()]
         if len(paths) < 2:
             return ""
-        resp = await self._llm_generate_with_provider_fallback(
-            primary_provider_id=provider_id,
-            umo=event.unified_msg_origin,
-            use_current_when_primary_empty=True,
-            operation_name="meme battle image analysis",
-            timeout_seconds=MEME_COMBAT_LLM_TIMEOUT_SECONDS,
-            prompt=(
-                "请快速分析这两张连续图片对话的共同语义、情绪、场景和适合接上的表情包方向。"
-                "只输出 6 到 12 个短中文关键词，用空格分隔，不要解释。"
-            ),
-            image_urls=paths,
-            contexts=[],
-            system_prompt="你是群聊斗图语义压缩器，只输出关键词。",
+        prepared_paths: list[str] = []
+        cleanup_paths: list[Path] = []
+        try:
+            for index, path in enumerate(paths, start=1):
+                try:
+                    prepared_path, cleanup = (
+                        await self._prepare_meme_battle_analysis_image_input(
+                            path,
+                            index,
+                        )
+                    )
+                    cleanup_paths.extend(cleanup)
+                    prepared_paths.append(
+                        prepared_path if Path(prepared_path).is_file() else str(path)
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "astrbot_plugin_smart_imagechat_hub: meme battle image "
+                        "analysis input prepare failed; using original image: %s",
+                        str(exc) or type(exc).__name__,
+                    )
+                    prepared_paths.append(str(path))
+
+            if len(prepared_paths) < 2:
+                return ""
+
+            inherits_current = self._provider_id_inherits_current_chat_model(provider_id)
+            if inherits_current:
+
+                async def analyze_one(index: int, path: str) -> str:
+                    logger.info(
+                        "astrbot_plugin_smart_imagechat_hub: meme battle LLM image "
+                        "analysis started: provider_mode=inherit image_index=%d "
+                        "concurrent_requests=2",
+                        index,
+                    )
+                    try:
+                        resp = await self._llm_generate_with_provider_fallback(
+                            primary_provider_id="",
+                            umo=event.unified_msg_origin,
+                            use_current_when_primary_empty=True,
+                            operation_name="meme battle image analysis",
+                            timeout_seconds=MEME_COMBAT_LLM_TIMEOUT_SECONDS,
+                            use_isolated_openai_compatible_lane=True,
+                            prompt=(
+                                "请快速分析这张群聊斗图图片的语义、情绪、场景和适合接上的表情包方向。"
+                                "只输出 3 到 8 个短中文关键词，用空格分隔，不要解释。"
+                            ),
+                            image_urls=[path],
+                            contexts=[],
+                            system_prompt="你是群聊斗图语义压缩器，只输出关键词。",
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        error_info = self._meme_combat_llm_error_info(exc)
+                        logger.warning(
+                            "astrbot_plugin_smart_imagechat_hub: meme battle LLM "
+                            "image analysis failed: provider_mode=inherit "
+                            "image_index=%d status_code=%s code=%s type=%s "
+                            "request_id=%s message=%s",
+                            index,
+                            error_info["status_code"],
+                            error_info["code"],
+                            error_info["type"],
+                            error_info["request_id"],
+                            error_info["message"],
+                        )
+                        raise
+
+                    completion_text = str(getattr(resp, "completion_text", "") or "")
+                    logger.info(
+                        "astrbot_plugin_smart_imagechat_hub: meme battle LLM image "
+                        "analysis succeeded: provider_mode=inherit image_index=%d "
+                        "keyword_count=%d response_len=%d",
+                        index,
+                        len(self._normalize_tags(completion_text)),
+                        len(completion_text),
+                    )
+                    return completion_text
+
+                responses = await asyncio.gather(
+                    *(
+                        analyze_one(index, path)
+                        for index, path in enumerate(prepared_paths[:2], start=1)
+                    ),
+                    return_exceptions=True,
+                )
+                successful_texts: list[str] = []
+                error_summaries: list[str] = []
+                for index, result in enumerate(responses, start=1):
+                    if isinstance(result, asyncio.CancelledError):
+                        raise result
+                    if isinstance(result, BaseException):
+                        error_summaries.append(
+                            f"image_{index}: "
+                            f"{self._meme_combat_llm_error_summary(result)}"
+                        )
+                    else:
+                        successful_texts.append(str(result or ""))
+
+                if successful_texts:
+                    return " ".join(self._merge_tags(*successful_texts))[:160]
+                raise RuntimeError(
+                    "meme battle image analysis failed for both images: "
+                    + "; ".join(error_summaries[:2])
+                )
+
+            logger.info(
+                "astrbot_plugin_smart_imagechat_hub: meme battle LLM image analysis "
+                "started: provider_mode=explicit image_count=2",
+            )
+            try:
+                resp = await self._llm_generate_with_provider_fallback(
+                    primary_provider_id=provider_id,
+                    umo=event.unified_msg_origin,
+                    use_current_when_primary_empty=True,
+                    operation_name="meme battle image analysis",
+                    timeout_seconds=MEME_COMBAT_LLM_TIMEOUT_SECONDS,
+                    prompt=(
+                        "请快速分析这两张连续图片对话的共同语义、情绪、场景和适合接上的表情包方向。"
+                        "只输出 6 到 12 个短中文关键词，用空格分隔，不要解释。"
+                    ),
+                    image_urls=prepared_paths[:2],
+                    contexts=[],
+                    system_prompt="你是群聊斗图语义压缩器，只输出关键词。",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                error_info = self._meme_combat_llm_error_info(exc)
+                logger.warning(
+                    "astrbot_plugin_smart_imagechat_hub: meme battle LLM image "
+                    "analysis failed: provider_mode=explicit status_code=%s "
+                    "code=%s type=%s request_id=%s message=%s",
+                    error_info["status_code"],
+                    error_info["code"],
+                    error_info["type"],
+                    error_info["request_id"],
+                    error_info["message"],
+                )
+                raise
+
+            completion_text = str(getattr(resp, "completion_text", "") or "")
+            logger.info(
+                "astrbot_plugin_smart_imagechat_hub: meme battle LLM image analysis "
+                "succeeded: provider_mode=explicit keyword_count=%d response_len=%d",
+                len(self._normalize_tags(completion_text)),
+                len(completion_text),
+            )
+            return " ".join(self._normalize_tags(completion_text))[:160]
+        finally:
+            self._cleanup_temp_paths(cleanup_paths)
+
+    async def _prepare_meme_battle_analysis_image_input(
+        self,
+        image_path: Path,
+        image_index: int,
+    ) -> tuple[str, list[Path]]:
+        prepared_path = str(image_path)
+        cleanup_paths: list[Path] = []
+        original_bytes = self._meme_combat_file_size_bytes(image_path)
+
+        if not image_path.is_file():
+            return prepared_path, cleanup_paths
+
+        try:
+            if PILImage is None:
+                raise RuntimeError("Pillow is unavailable")
+            temp_path = (
+                Path(tempfile.gettempdir())
+                / f"smart_imagechat_meme_battle_{uuid.uuid4().hex}.jpg"
+            )
+            prepared_path = await asyncio.to_thread(
+                self._write_meme_battle_analysis_jpeg,
+                image_path,
+                temp_path,
+            )
+            cleanup_paths.append(temp_path)
+        except Exception as exc:
+            logger.debug(
+                "astrbot_plugin_smart_imagechat_hub: meme battle lightweight image "
+                "analysis input prepare failed; falling back: image_index=%d "
+                "error=%s",
+                image_index,
+                str(exc) or type(exc).__name__,
+            )
+            try:
+                prepared_path, cleanup_paths = await self._prepare_caption_image_input(
+                    image_path
+                )
+                if not Path(prepared_path).is_file():
+                    prepared_path = str(image_path)
+                    cleanup_paths = []
+            except Exception as fallback_exc:
+                logger.debug(
+                    "astrbot_plugin_smart_imagechat_hub: meme battle caption image "
+                    "input fallback failed; using original image: image_index=%d "
+                    "error=%s",
+                    image_index,
+                    str(fallback_exc) or type(fallback_exc).__name__,
+                )
+                prepared_path = str(image_path)
+                cleanup_paths = []
+
+        prepared_bytes = self._meme_combat_file_size_bytes(Path(prepared_path))
+        logger.info(
+            "astrbot_plugin_smart_imagechat_hub: meme battle image analysis input "
+            "prepared: image_index=%d original_bytes=%d prepared_bytes=%d",
+            image_index,
+            original_bytes,
+            prepared_bytes,
         )
-        return " ".join(self._normalize_tags(resp.completion_text))[:160]
+        return prepared_path, cleanup_paths
+
+    def _write_meme_battle_analysis_jpeg(
+        self,
+        source: Path,
+        target: Path,
+    ) -> str:
+        if PILImage is None:
+            raise RuntimeError("Pillow is unavailable")
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        frame = None
+        try:
+            with PILImage.open(source) as img:
+                try:
+                    img.seek(0)
+                except Exception:
+                    pass
+
+                resampling = getattr(PILImage, "Resampling", None)
+                resample_filter = getattr(
+                    resampling,
+                    "LANCZOS",
+                    getattr(PILImage, "LANCZOS", 1),
+                )
+                img.thumbnail(
+                    (
+                        MEME_COMBAT_ANALYSIS_IMAGE_MAX_EDGE,
+                        MEME_COMBAT_ANALYSIS_IMAGE_MAX_EDGE,
+                    ),
+                    resample_filter,
+                )
+
+                has_alpha = img.mode in {"RGBA", "LA"} or (
+                    img.mode == "P" and "transparency" in img.info
+                )
+                if has_alpha:
+                    rgba = img.convert("RGBA")
+                    background = PILImage.new(
+                        "RGBA",
+                        rgba.size,
+                        (255, 255, 255, 255),
+                    )
+                    background.alpha_composite(rgba)
+                    frame = background.convert("RGB")
+                    rgba.close()
+                    background.close()
+                else:
+                    frame = img.convert("RGB")
+
+                frame.save(
+                    target,
+                    "JPEG",
+                    quality=MEME_COMBAT_ANALYSIS_IMAGE_JPEG_QUALITY,
+                    optimize=True,
+                )
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        finally:
+            if frame is not None:
+                frame.close()
+        return str(target)
+
+    def _meme_combat_file_size_bytes(self, path: Path) -> int:
+        try:
+            return int(path.stat().st_size)
+        except OSError:
+            return 0
+
+    def _meme_combat_llm_error_summary(self, exc: BaseException) -> str:
+        error_info = self._meme_combat_llm_error_info(exc)
+        summary = (
+            f"{type(exc).__name__}(status_code={error_info['status_code']}, "
+            f"code={error_info['code']}, type={error_info['type']}, "
+            f"request_id={error_info['request_id']}, "
+            f"message={error_info['message']})"
+        )
+        return summary[:500]
+
+    def _meme_combat_llm_error_info(self, exc: BaseException) -> dict[str, str]:
+        error_info = {
+            "status_code": "n/a",
+            "code": "n/a",
+            "type": "n/a",
+            "request_id": "n/a",
+            "message": "n/a",
+        }
+        visited: set[int] = set()
+
+        def normalize(value: Any) -> str:
+            if value is None:
+                return ""
+            try:
+                text = str(value).strip()
+            except Exception:
+                text = type(value).__name__
+            if not text:
+                return ""
+            return " ".join(text.split())[:300]
+
+        def set_value(key: str, value: Any) -> None:
+            if error_info.get(key) != "n/a":
+                return
+            text = normalize(value)
+            if text:
+                error_info[key] = text
+
+        def get_field(obj: Any, name: str) -> Any:
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return obj.get(name)
+            try:
+                return getattr(obj, name)
+            except Exception:
+                return None
+
+        def scan_headers(headers: Any) -> None:
+            if headers is None:
+                return
+            request_id_keys = (
+                "x-request-id",
+                "x-requestid",
+                "request-id",
+                "request_id",
+                "x-dashscope-request-id",
+                "x-dashscope-requestid",
+                "dashscope-request-id",
+            )
+            for key in request_id_keys:
+                try:
+                    value = headers.get(key)
+                except Exception:
+                    value = None
+                set_value("request_id", value)
+            try:
+                items = headers.items()
+            except Exception:
+                items = ()
+            for key, value in items:
+                key_text = str(key or "").lower()
+                if "request" in key_text and "id" in key_text:
+                    set_value("request_id", value)
+
+        def scan_body(body: Any) -> None:
+            if body is None or id(body) in visited:
+                return
+            visited.add(id(body))
+            set_value("status_code", get_field(body, "status_code"))
+            set_value("status_code", get_field(body, "status"))
+            set_value("code", get_field(body, "code"))
+            set_value("type", get_field(body, "type"))
+            set_value("request_id", get_field(body, "request_id"))
+            set_value("message", get_field(body, "message"))
+            scan_body(get_field(body, "error"))
+
+        def scan_exception(current: BaseException | None) -> None:
+            if current is None or id(current) in visited:
+                return
+            visited.add(id(current))
+            set_value("status_code", get_field(current, "status_code"))
+            set_value("status_code", get_field(current, "status"))
+            set_value("code", get_field(current, "code"))
+            set_value("type", get_field(current, "type"))
+            set_value("request_id", get_field(current, "request_id"))
+            scan_headers(get_field(current, "headers"))
+            response = get_field(current, "response")
+            set_value("status_code", get_field(response, "status_code"))
+            set_value("status_code", get_field(response, "status"))
+            scan_headers(get_field(response, "headers"))
+            scan_body(get_field(current, "body"))
+            scan_body(get_field(current, "error"))
+            set_value("message", get_field(current, "message"))
+            set_value("message", str(current))
+            scan_exception(get_field(current, "__cause__"))
+            scan_exception(get_field(current, "__context__"))
+
+        scan_exception(exc)
+        return error_info
 
     async def _analyze_meme_battle_match(
         self,
@@ -840,20 +1238,69 @@ class MemeCombatMixin:
         profile: dict[str, Any],
         candidates: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        resp = await self._llm_generate_with_provider_fallback(
-            primary_provider_id=provider_id,
-            umo=event.unified_msg_origin,
-            use_current_when_primary_empty=True,
-            operation_name="meme battle match analysis",
-            timeout_seconds=MEME_COMBAT_LLM_TIMEOUT_SECONDS,
-            prompt=self._match_prompt(profile_text, profile, candidates),
-            contexts=[],
-            system_prompt=(
-                "你是 AstrBot 的本地表情包斗图匹配器。"
-                "只能输出严格 JSON，不要输出 Markdown、解释或多余文本。"
-            ),
+        scored_candidates = [
+            item
+            for item in candidates
+            if self._to_float(item.get("search_score"), 0.0) > 0
+        ]
+        if not scored_candidates:
+            logger.info(
+                "astrbot_plugin_smart_imagechat_hub: meme battle match analysis "
+                "used local selection: candidate_count=%d top_score=0.000 "
+                "selected_count=0 llm_request=skipped",
+                len(candidates),
+            )
+            return {
+                "matched": False,
+                "image_id": "",
+                "image_ids": [],
+                "need": profile_text[:80],
+                "reason": "no positive local candidate",
+                "confidence": 0.0,
+            }
+
+        top_score = max(
+            self._to_float(item.get("search_score"), 0.0)
+            for item in scored_candidates
         )
-        return self._parse_decision(resp.completion_text)
+        pool = [
+            item
+            for item in scored_candidates
+            if self._to_float(item.get("search_score"), 0.0)
+            >= max(0.1, top_score - 0.8)
+        ][:SEARCH_SELECTION_POOL_SIZE]
+        image_ids = [
+            image_id
+            for image_id in (
+                str(item.get("id") or "").strip()
+                for item in pool
+            )
+            if image_id
+        ]
+        confidence = min(0.95, max(0.35, top_score / (top_score + 2.0)))
+        logger.info(
+            "astrbot_plugin_smart_imagechat_hub: meme battle match analysis "
+            "used local selection: candidate_count=%d top_score=%.3f "
+            "selected_count=%d llm_request=skipped",
+            len(candidates),
+            top_score,
+            len(image_ids),
+        )
+        logger.debug(
+            "astrbot_plugin_smart_imagechat_hub: meme battle local match details: "
+            "provider_inherited=%s query_terms=%s selected_image_ids=%s",
+            self._provider_id_inherits_current_chat_model(provider_id),
+            profile.get("terms", []),
+            image_ids,
+        )
+        return {
+            "matched": bool(image_ids),
+            "image_id": image_ids[0] if image_ids else "",
+            "image_ids": image_ids,
+            "need": profile_text[:80],
+            "reason": "local ranked candidate selection",
+            "confidence": confidence if image_ids else 0.0,
+        }
 
     def _select_meme_battle_image(
         self,

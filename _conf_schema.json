@@ -174,6 +174,22 @@
         "options": [],
         "hint": "可填写 AstrBot 系统配置中 [模型提供商] 的 provider id；留空或不可用时，继承 AstrBot 当前会话的模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 mimo-v2.5。"
       },
+      "retrieval_mode": {
+        "description": "表情包检索模式",
+        "type": "string",
+        "default": "bot_reply_serial",
+        "options": [
+          "bot_reply_serial",
+          "user_message_parallel",
+          "user_message_fast_prefilter"
+        ],
+        "labels": [
+          "依据 bot 生成的回复内容，进行串行检索（更加准确）",
+          "依据用户发言内容，进行并发检索（速度更快）",
+          "依据发言内容本地精排，进行小规模并发检索（速度最快）"
+        ],
+        "hint": "串行模式会等 bot 回复生成后再分析，语境更准确；并发模式会同步进行回复生成+表情包检索，减少等待时间；本地精排+并发模式会先按标签库和强语义命中精排候选，主回复完成时不继续等待未完成的检索任务。"
+      },
       "meme_only": {
         "description": "只选择表情包",
         "type": "bool",
@@ -191,6 +207,12 @@
         "type": "string",
         "default": "0.25",
         "hint": "取值范围 0-1。只有普通 LLM 回复概率命中时，才启动语义和情感分析 + 表情包选择流程。"
+      },
+      "debug_mode": {
+        "description": "调试模式",
+        "type": "bool",
+        "default": false,
+        "hint": "仅对“对话中主动发送表情包”流程开启详细运行日志，包括 LLM 查询、API 调用、成功状态和模型 API 报错状态信息。"
       }
     }
   },

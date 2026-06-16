@@ -6,24 +6,98 @@ from .common import (
     DEFAULT_CAPTION_PROVIDER_CONFIG_KEY,
     Image,
     MessageEventResult,
+    PROACTIVE_EMOJI_FAST_FALLBACK_EXTRA_KEY,
     PENDING_PROACTIVE_EMOJI_EXTRA_KEY,
     Path,
     PROACTIVE_EMOJI_DECISION_EXTRA_KEY,
+    PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY,
+    PROACTIVE_EMOJI_TASK_EXTRA_KEY,
     SEARCH_CANDIDATE_LIMIT,
     SEARCH_QUERY_STOPWORDS,
     SEARCH_SELECTION_POOL_SIZE,
     SKIP_PROACTIVE_EMOJI_EXTRA_KEY,
     TAG_CATEGORY_CONFIG_KEY,
     USER_SEARCH_CONFIG_KEY,
+    asyncio,
     json,
     logger,
     random,
     re,
     traceback,
 )
+from .proactive_fast_retrieval import (
+    PROACTIVE_FAST_RETRIEVAL_MODE,
+    PROACTIVE_FAST_SYSTEM_PROMPT,
+    build_proactive_fast_prefilter,
+    build_proactive_fast_prompt,
+)
+
+PROACTIVE_EMOJI_SOURCE_BOT_REPLY = "bot_reply"
+PROACTIVE_EMOJI_SOURCE_USER_MESSAGE = "user_message"
 
 
 class RetrievalMixin:
+    def _proactive_emoji_debug_enabled(self, cfg: dict[str, Any] | None) -> bool:
+        if not isinstance(cfg, dict):
+            return False
+        return self._to_bool(cfg.get("debug_mode"), False)
+
+    def _log_proactive_emoji_debug(
+        self,
+        cfg: dict[str, Any] | None,
+        message: str,
+        *args: Any,
+    ) -> None:
+        if not self._proactive_emoji_debug_enabled(cfg):
+            return
+        logger.info(
+            "astrbot_plugin_smart_imagechat_hub: proactive emoji debug: "
+            + message,
+            *args,
+        )
+
+    def _proactive_emoji_error_info(self, exc: Exception) -> dict[str, str]:
+        info = {"error": exc.__class__.__name__}
+        text = str(exc)
+        if text:
+            info["message"] = text
+        for attr in ("status_code", "status", "code", "type", "request_id"):
+            value = getattr(exc, attr, None)
+            if value not in (None, ""):
+                info[attr] = str(value)
+        response = getattr(exc, "response", None)
+        if response is not None:
+            for attr in ("status_code", "status", "reason"):
+                value = getattr(response, attr, None)
+                if value not in (None, ""):
+                    info[f"response_{attr}"] = str(value)
+            headers = getattr(response, "headers", None)
+            request_id = None
+            if headers is not None:
+                try:
+                    request_id = headers.get("x-request-id") or headers.get(
+                        "request-id"
+                    )
+                except Exception:
+                    request_id = None
+            if request_id:
+                info["response_request_id"] = str(request_id)
+        return info
+
+    def _log_proactive_emoji_error_debug(
+        self,
+        cfg: dict[str, Any] | None,
+        message: str,
+        exc: Exception,
+    ) -> None:
+        if not self._proactive_emoji_debug_enabled(cfg):
+            return
+        self._log_proactive_emoji_debug(
+            cfg,
+            message,
+            self._proactive_emoji_error_info(exc),
+        )
+
     def _library_candidates(self) -> list[dict[str, Any]]:
         candidates = []
         images = self._index.get("images", {})
@@ -185,29 +259,141 @@ class RetrievalMixin:
     async def _maybe_append_proactive_emoji(self, event: AstrMessageEvent) -> None:
         if event.get_extra(SKIP_PROACTIVE_EMOJI_EXTRA_KEY, False):
             return
-        if event.get_extra(PROACTIVE_EMOJI_DECISION_EXTRA_KEY, False):
-            return
+        task = event.get_extra(PROACTIVE_EMOJI_TASK_EXTRA_KEY)
         cfg = self._proactive_emoji_config()
         if not cfg["enabled"]:
             return
+        self._log_proactive_emoji_debug(
+            cfg,
+            "append flow started; retrieval_mode=%s provider=%s",
+            cfg.get("retrieval_mode"),
+            cfg.get("analysis_provider_id") or "<current>",
+        )
 
         result = event.get_result()
         if not isinstance(result, MessageEventResult) or not result.is_llm_result():
-            return
-        reply_text = result.get_plain_text().strip()
-        if not reply_text:
+            self._log_proactive_emoji_debug(cfg, "append skipped; result is not LLM output.")
             return
         if any(isinstance(comp, Image) for comp in result.chain):
+            self._log_proactive_emoji_debug(cfg, "append skipped; result already contains image.")
+            return
+
+        if task is not None:
+            event.set_extra(PROACTIVE_EMOJI_TASK_EXTRA_KEY, None)
+            if cfg.get("retrieval_mode") == PROACTIVE_FAST_RETRIEVAL_MODE:
+                image_item = None
+                if task.done():
+                    try:
+                        self._log_proactive_emoji_debug(
+                            cfg,
+                            "fast decision task already completed.",
+                        )
+                        image_item = task.result()
+                    except asyncio.CancelledError:
+                        self._log_proactive_emoji_debug(
+                            cfg,
+                            "fast decision task was cancelled before append.",
+                        )
+                    except Exception as exc:
+                        self._log_proactive_emoji_error_debug(
+                            cfg,
+                            "fast decision task failed; error=%s",
+                            exc,
+                        )
+                        logger.warning(
+                            "astrbot_plugin_smart_imagechat_hub: proactive emoji fast task failed: %s",
+                            exc,
+                            exc_info=True,
+                        )
+                else:
+                    task.cancel()
+                    image_item = event.get_extra(PROACTIVE_EMOJI_FAST_FALLBACK_EXTRA_KEY)
+                    self._log_proactive_emoji_debug(
+                        cfg,
+                        "fast decision task not ready; cancelled and using local fallback=%s.",
+                        bool(image_item),
+                    )
+                event.set_extra(PROACTIVE_EMOJI_FAST_FALLBACK_EXTRA_KEY, None)
+                await self._apply_proactive_emoji_image(
+                    event,
+                    result,
+                    image_item,
+                    cfg,
+                )
+                return
+            try:
+                self._log_proactive_emoji_debug(
+                    cfg,
+                    "waiting for parallel decision task.",
+                )
+                image_item = await asyncio.shield(task)
+                self._log_proactive_emoji_debug(
+                    cfg,
+                    "parallel decision task completed; image_selected=%s",
+                    bool(image_item),
+                )
+                await self._apply_proactive_emoji_image(
+                    event,
+                    result,
+                    image_item,
+                    cfg,
+                )
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise
+                self._log_proactive_emoji_debug(
+                    cfg,
+                    "parallel decision task was cancelled before append.",
+                )
+            except Exception as exc:
+                self._log_proactive_emoji_error_debug(
+                    cfg,
+                    "parallel decision task failed; error=%s",
+                    exc,
+                )
+                logger.warning(
+                    "astrbot_plugin_smart_imagechat_hub: proactive emoji parallel task failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+            return
+
+        if event.get_extra(PROACTIVE_EMOJI_DECISION_EXTRA_KEY, False):
+            self._log_proactive_emoji_debug(cfg, "serial flow skipped; decision already exists.")
+            return
+        if cfg.get("retrieval_mode") in {
+            "user_message_parallel",
+            PROACTIVE_FAST_RETRIEVAL_MODE,
+        }:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "serial flow skipped; retrieval_mode=%s.",
+                cfg.get("retrieval_mode"),
+            )
+            return
+
+        reply_text = result.get_plain_text().strip()
+        if not reply_text:
+            self._log_proactive_emoji_debug(cfg, "serial flow skipped; empty bot reply.")
             return
 
         event.set_extra(PROACTIVE_EMOJI_DECISION_EXTRA_KEY, True)
-        probability = self._to_float(cfg.get("trigger_probability"), 0.25)
-        if probability <= 0 or random.random() > probability:
+        if not self._proactive_emoji_probability_hit(cfg):
+            self._log_proactive_emoji_debug(cfg, "serial flow skipped; probability missed.")
             return
+        self._log_proactive_emoji_debug(cfg, "serial flow probability hit.")
 
         await self._sync_library(caption_mode="none")
+        self._log_proactive_emoji_debug(cfg, "serial flow synced image library.")
         candidates = self._proactive_emoji_candidates(bool(cfg["meme_only"]))
+        self._log_proactive_emoji_debug(
+            cfg,
+            "serial flow candidate query finished; candidate_count=%d meme_only=%s",
+            len(candidates),
+            bool(cfg["meme_only"]),
+        )
         if not candidates:
+            self._log_proactive_emoji_debug(cfg, "serial flow stopped; no candidates.")
             return
 
         try:
@@ -216,48 +402,324 @@ class RetrievalMixin:
                 reply_text,
                 candidates,
                 str(cfg.get("analysis_provider_id") or ""),
+                source_kind=PROACTIVE_EMOJI_SOURCE_BOT_REPLY,
+                cfg=cfg,
             )
-            image_item = self._select_proactive_emoji(decision, candidates)
-            if not image_item:
-                return
-            image_path = self._abs_plugin_data_path(image_item["rel_path"])
-            if image_path.is_file():
-                image_tags = self._tags_from_item(image_item)
-                if cfg["embed_in_conversation"]:
-                    send_image_path, cleanup_paths = await self._prepare_send_image_path(
-                        image_path,
-                        image_tags,
-                    )
-                    cleanup_paths = self._defer_send_image_style_cleanup(
-                        event,
-                        cleanup_paths,
-                    )
-                    result.chain.append(Image.fromFileSystem(str(send_image_path)))
-                    await self._after_plugin_sent_image_for_meme_combat(
-                        event,
-                        str(image_path),
-                        source="proactive_emoji",
-                        defer_burst=True,
-                    )
-                else:
-                    event.set_extra(
-                        PENDING_PROACTIVE_EMOJI_EXTRA_KEY,
-                        {"image_path": str(image_path)},
-                    )
+            self._log_proactive_emoji_debug(
+                cfg,
+                "serial LLM analysis finished; matched=%s confidence=%s image_ids=%s",
+                decision.get("matched"),
+                decision.get("confidence"),
+                decision.get("image_ids"),
+            )
+            image_item = self._select_proactive_emoji(decision, candidates, cfg)
+            await self._apply_proactive_emoji_image(event, result, image_item, cfg)
         except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "serial selection failed; error=%s",
+                exc,
+            )
             logger.warning(
                 "astrbot_plugin_smart_imagechat_hub: proactive emoji selection failed: %s",
                 exc,
                 exc_info=True,
             )
 
+    async def _start_parallel_proactive_emoji(
+        self,
+        event: AstrMessageEvent,
+        user_message: str,
+    ) -> None:
+        if event.get_extra(PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY, False):
+            return
+        if event.get_extra(SKIP_PROACTIVE_EMOJI_EXTRA_KEY, False):
+            return
+        if event.get_extra(PROACTIVE_EMOJI_DECISION_EXTRA_KEY, False):
+            return
+        cfg = self._proactive_emoji_config()
+        if not cfg["enabled"]:
+            return
+        if cfg.get("retrieval_mode") not in {
+            "user_message_parallel",
+            PROACTIVE_FAST_RETRIEVAL_MODE,
+        }:
+            return
+        self._log_proactive_emoji_debug(
+            cfg,
+            "parallel flow requested; retrieval_mode=%s provider=%s",
+            cfg.get("retrieval_mode"),
+            cfg.get("analysis_provider_id") or "<current>",
+        )
+        user_message = str(user_message or "").strip()
+        if not user_message:
+            self._log_proactive_emoji_debug(cfg, "parallel flow skipped; empty user message.")
+            return
+
+        event.set_extra(PROACTIVE_EMOJI_DECISION_EXTRA_KEY, True)
+        if not self._proactive_emoji_probability_hit(cfg):
+            self._log_proactive_emoji_debug(cfg, "parallel flow skipped; probability missed.")
+            return
+        self._log_proactive_emoji_debug(cfg, "parallel flow probability hit.")
+
+        coroutine = None
+        try:
+            event.set_extra(PROACTIVE_EMOJI_FAST_FALLBACK_EXTRA_KEY, None)
+            if cfg.get("retrieval_mode") == PROACTIVE_FAST_RETRIEVAL_MODE:
+                coroutine = self._run_fast_proactive_emoji_decision(
+                    event,
+                    user_message,
+                    cfg,
+                )
+            else:
+                coroutine = self._run_parallel_proactive_emoji_decision(
+                    event,
+                    user_message,
+                    cfg,
+                )
+            task = asyncio.create_task(coroutine)
+        except RuntimeError as exc:
+            if coroutine is not None:
+                coroutine.close()
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "parallel task start failed; error=%s",
+                exc,
+            )
+            return
+        task.add_done_callback(
+            lambda done_task: self._log_parallel_proactive_emoji_task_error(
+                done_task,
+                cfg,
+            )
+        )
+        event.set_extra(PROACTIVE_EMOJI_TASK_EXTRA_KEY, task)
+        self._log_proactive_emoji_debug(cfg, "parallel task started.")
+
+    def _log_parallel_proactive_emoji_task_error(
+        self,
+        task: asyncio.Task,
+        cfg: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "parallel task callback observed cancellation.",
+            )
+        except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "parallel task callback observed failure; error=%s",
+                exc,
+            )
+            logger.warning(
+                "astrbot_plugin_smart_imagechat_hub: proactive emoji parallel task failed: %s",
+                exc,
+                exc_info=True,
+            )
+
+    async def _run_parallel_proactive_emoji_decision(
+        self,
+        event: AstrMessageEvent,
+        user_message: str,
+        cfg: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        try:
+            self._log_proactive_emoji_debug(cfg, "parallel decision task running.")
+            await self._sync_library(caption_mode="none")
+            self._log_proactive_emoji_debug(cfg, "parallel flow synced image library.")
+            candidates = self._proactive_emoji_candidates(bool(cfg["meme_only"]))
+            self._log_proactive_emoji_debug(
+                cfg,
+                "parallel flow candidate query finished; candidate_count=%d meme_only=%s",
+                len(candidates),
+                bool(cfg["meme_only"]),
+            )
+            if not candidates:
+                self._log_proactive_emoji_debug(cfg, "parallel flow stopped; no candidates.")
+                return None
+            decision = await self._analyze_proactive_emoji(
+                event,
+                user_message,
+                candidates,
+                str(cfg.get("analysis_provider_id") or ""),
+                source_kind=PROACTIVE_EMOJI_SOURCE_USER_MESSAGE,
+                cfg=cfg,
+            )
+            self._log_proactive_emoji_debug(
+                cfg,
+                "parallel LLM analysis finished; matched=%s confidence=%s image_ids=%s",
+                decision.get("matched"),
+                decision.get("confidence"),
+                decision.get("image_ids"),
+            )
+            return self._select_proactive_emoji(decision, candidates, cfg)
+        except asyncio.CancelledError:
+            self._log_proactive_emoji_debug(cfg, "parallel decision task cancelled.")
+            raise
+        except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "parallel selection failed; error=%s",
+                exc,
+            )
+            logger.warning(
+                "astrbot_plugin_smart_imagechat_hub: proactive emoji parallel selection failed: %s",
+                exc,
+                exc_info=True,
+            )
+            return None
+
+    async def _run_fast_proactive_emoji_decision(
+        self,
+        event: AstrMessageEvent,
+        user_message: str,
+        cfg: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        try:
+            self._log_proactive_emoji_debug(cfg, "fast decision task running.")
+            await self._sync_library(caption_mode="none")
+            self._log_proactive_emoji_debug(cfg, "fast flow synced image library.")
+            candidates = self._proactive_emoji_candidates(bool(cfg["meme_only"]))
+            self._log_proactive_emoji_debug(
+                cfg,
+                "fast flow candidate query finished; candidate_count=%d meme_only=%s",
+                len(candidates),
+                bool(cfg["meme_only"]),
+            )
+            if not candidates:
+                self._log_proactive_emoji_debug(cfg, "fast flow stopped; no candidates.")
+                return None
+
+            prefilter = build_proactive_fast_prefilter(user_message, candidates)
+            event.set_extra(
+                PROACTIVE_EMOJI_FAST_FALLBACK_EXTRA_KEY,
+                prefilter.fallback_item,
+            )
+            self._log_proactive_emoji_debug(
+                cfg,
+                "fast ranking finished; prompt_candidate_count=%d fallback=%s profile=%s",
+                len(prefilter.candidates),
+                bool(prefilter.fallback_item),
+                prefilter.profile,
+            )
+            if not prefilter.candidates:
+                return None
+
+            decision = await self._analyze_fast_proactive_emoji(
+                event,
+                user_message,
+                prefilter,
+                str(cfg.get("analysis_provider_id") or ""),
+                cfg=cfg,
+            )
+            self._log_proactive_emoji_debug(
+                cfg,
+                "fast LLM analysis finished; matched=%s confidence=%s image_ids=%s",
+                decision.get("matched"),
+                decision.get("confidence"),
+                decision.get("image_ids"),
+            )
+            image_item = self._select_proactive_emoji(
+                decision,
+                prefilter.candidates,
+                cfg,
+            )
+            return image_item
+        except asyncio.CancelledError:
+            self._log_proactive_emoji_debug(cfg, "fast decision task cancelled.")
+            raise
+        except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "fast selection failed; error=%s",
+                exc,
+            )
+            logger.warning(
+                "astrbot_plugin_smart_imagechat_hub: proactive emoji fast selection failed: %s",
+                exc,
+                exc_info=True,
+            )
+            return None
+
+    def _proactive_emoji_probability_hit(self, cfg: dict[str, Any]) -> bool:
+        probability = self._to_float(cfg.get("trigger_probability"), 0.25)
+        hit = probability > 0 and random.random() <= probability
+        self._log_proactive_emoji_debug(
+            cfg,
+            "probability check; probability=%s hit=%s",
+            probability,
+            hit,
+        )
+        return hit
+
+    async def _apply_proactive_emoji_image(
+        self,
+        event: AstrMessageEvent,
+        result: MessageEventResult,
+        image_item: dict[str, Any] | None,
+        cfg: dict[str, Any],
+    ) -> None:
+        if not image_item:
+            self._log_proactive_emoji_debug(cfg, "apply skipped; no selected image.")
+            return
+        image_path = self._abs_plugin_data_path(image_item["rel_path"])
+        if not image_path.is_file():
+            self._log_proactive_emoji_debug(
+                cfg,
+                "apply skipped; image file missing: %s",
+                image_item.get("rel_path"),
+            )
+            return
+        image_tags = self._tags_from_item(image_item)
+        if cfg["embed_in_conversation"]:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "embedding selected image into LLM result: %s",
+                image_item.get("rel_path"),
+            )
+            send_image_path, cleanup_paths = await self._prepare_send_image_path(
+                image_path,
+                image_tags,
+            )
+            cleanup_paths = self._defer_send_image_style_cleanup(
+                event,
+                cleanup_paths,
+            )
+            result.chain.append(Image.fromFileSystem(str(send_image_path)))
+            await self._after_plugin_sent_image_for_meme_combat(
+                event,
+                str(image_path),
+                source="proactive_emoji",
+                defer_burst=True,
+            )
+        else:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "queued selected image for independent send: %s",
+                image_item.get("rel_path"),
+            )
+            event.set_extra(
+                PENDING_PROACTIVE_EMOJI_EXTRA_KEY,
+                {"image_path": str(image_path)},
+            )
+
     async def _send_pending_proactive_emoji(self, event: AstrMessageEvent) -> None:
         pending = event.get_extra(PENDING_PROACTIVE_EMOJI_EXTRA_KEY)
         if not isinstance(pending, dict):
             return
+        cfg = self._proactive_emoji_config()
+        self._log_proactive_emoji_debug(cfg, "pending independent send started.")
         event.set_extra(PENDING_PROACTIVE_EMOJI_EXTRA_KEY, None)
         image_path = Path(str(pending.get("image_path") or ""))
         if not image_path.is_file():
+            self._log_proactive_emoji_debug(
+                cfg,
+                "pending independent send skipped; image file missing: %s",
+                image_path,
+            )
             return
         send_image_path, cleanup_paths = await self._prepare_send_image_path(
             image_path,
@@ -265,13 +727,24 @@ class RetrievalMixin:
         )
         cleanup_paths = self._defer_send_image_style_cleanup(event, cleanup_paths)
         try:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "sending pending image through event API: %s",
+                image_path,
+            )
             await event.send(MessageEventResult().file_image(str(send_image_path)))
+            self._log_proactive_emoji_debug(cfg, "pending independent send succeeded.")
             await self._after_plugin_sent_image_for_meme_combat(
                 event,
                 str(image_path),
                 source="proactive_emoji",
             )
         except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "pending independent send failed; error=%s",
+                exc,
+            )
             logger.warning(
                 "astrbot_plugin_smart_imagechat_hub: failed to send proactive emoji image: %s",
                 exc,
@@ -293,56 +766,174 @@ class RetrievalMixin:
     async def _analyze_proactive_emoji(
         self,
         event: AstrMessageEvent,
-        reply_text: str,
+        source_text: str,
         candidates: list[dict[str, Any]],
         provider_id: str,
+        source_kind: str = PROACTIVE_EMOJI_SOURCE_BOT_REPLY,
+        cfg: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        prompt = self._proactive_emoji_prompt(reply_text, candidates)
-        resp = await self._llm_generate_with_provider_fallback(
-            primary_provider_id=provider_id,
-            umo=event.unified_msg_origin,
-            use_current_when_primary_empty=True,
-            operation_name="proactive emoji analysis",
-            timeout_seconds=None,
-            prompt=prompt,
-            contexts=[],
-            system_prompt=(
-                "你是 AstrBot 的本地表情包语境匹配器。"
-                "你必须只输出严格 JSON，不要输出 Markdown 或解释。"
-            ),
+        prompt = self._proactive_emoji_prompt(source_text, candidates, source_kind)
+        inherits_current = self._provider_id_inherits_current_chat_model(provider_id)
+        previous_internal_marker = event.get_extra(
+            PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY,
+            False,
         )
-        return self._parse_decision(resp.completion_text)
+        event.set_extra(PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY, True)
+        try:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "querying LLM for proactive emoji analysis; source=%s provider=%s inherits_current=%s candidate_count=%d",
+                source_kind,
+                provider_id or "<current>",
+                inherits_current,
+                len(candidates),
+            )
+            resp = await self._llm_generate_with_provider_fallback(
+                primary_provider_id="" if inherits_current else provider_id,
+                umo=event.unified_msg_origin,
+                use_current_when_primary_empty=True,
+                operation_name="proactive emoji analysis",
+                timeout_seconds=None,
+                use_isolated_openai_compatible_lane=inherits_current,
+                prompt=prompt,
+                contexts=[],
+                system_prompt=(
+                    "你是 AstrBot 的本地表情包语境匹配器。"
+                    "你必须只输出严格 JSON，不要输出 Markdown 或解释。"
+                ),
+            )
+            self._log_proactive_emoji_debug(
+                cfg,
+                "LLM proactive emoji analysis succeeded; response_length=%d",
+                len(str(getattr(resp, "completion_text", "") or "")),
+            )
+        except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "LLM proactive emoji analysis failed; error=%s",
+                exc,
+            )
+            raise
+        finally:
+            event.set_extra(
+                PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY,
+                previous_internal_marker,
+            )
+        decision = self._parse_decision(resp.completion_text)
+        self._log_proactive_emoji_debug(
+            cfg,
+            "LLM proactive emoji analysis parsed; matched=%s confidence=%s",
+            decision.get("matched"),
+            decision.get("confidence"),
+        )
+        return decision
+
+    async def _analyze_fast_proactive_emoji(
+        self,
+        event: AstrMessageEvent,
+        user_message: str,
+        prefilter: Any,
+        provider_id: str,
+        cfg: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        prompt = build_proactive_fast_prompt(user_message, prefilter)
+        inherits_current = self._provider_id_inherits_current_chat_model(provider_id)
+        previous_internal_marker = event.get_extra(
+            PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY,
+            False,
+        )
+        event.set_extra(PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY, True)
+        try:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "querying LLM for fast proactive emoji analysis; provider=%s inherits_current=%s candidate_count=%d",
+                provider_id or "<current>",
+                inherits_current,
+                len(prefilter.candidates),
+            )
+            resp = await self._llm_generate_with_provider_fallback(
+                primary_provider_id="" if inherits_current else provider_id,
+                umo=event.unified_msg_origin,
+                use_current_when_primary_empty=True,
+                operation_name="proactive emoji fast analysis",
+                timeout_seconds=None,
+                use_isolated_openai_compatible_lane=inherits_current,
+                prompt=prompt,
+                contexts=[],
+                system_prompt=PROACTIVE_FAST_SYSTEM_PROMPT,
+            )
+            self._log_proactive_emoji_debug(
+                cfg,
+                "LLM fast proactive emoji analysis succeeded; response_length=%d",
+                len(str(getattr(resp, "completion_text", "") or "")),
+            )
+        except Exception as exc:
+            self._log_proactive_emoji_error_debug(
+                cfg,
+                "LLM fast proactive emoji analysis failed; error=%s",
+                exc,
+            )
+            raise
+        finally:
+            event.set_extra(
+                PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY,
+                previous_internal_marker,
+            )
+        decision = self._parse_decision(resp.completion_text)
+        self._log_proactive_emoji_debug(
+            cfg,
+            "LLM fast proactive emoji analysis parsed; matched=%s confidence=%s",
+            decision.get("matched"),
+            decision.get("confidence"),
+        )
+        return decision
 
     def _proactive_emoji_prompt(
         self,
-        reply_text: str,
+        source_text: str,
         candidates: list[dict[str, Any]],
+        source_kind: str = PROACTIVE_EMOJI_SOURCE_BOT_REPLY,
     ) -> str:
         compact_candidates = [self._search_prompt_item(item) for item in candidates]
+        if source_kind == PROACTIVE_EMOJI_SOURCE_USER_MESSAGE:
+            analysis_target = "用户刚刚发送的消息"
+            source_label = "用户发言"
+            matched_rule = "只有当图库中确实有图片适合回应这条用户发言时 matched 才为 true。"
+        else:
+            analysis_target = "bot 即将发送的 LLM 回复"
+            source_label = "bot 的 LLM 回复"
+            matched_rule = "只有当图库中确实有图片适合追加到这条回复后面时 matched 才为 true。"
         return (
             "请在一次请求中完成两件事：\n"
-            "1. 分析 bot 即将发送的 LLM 回复的语义、情绪、语气和适合追加的表情包氛围；\n"
+            f"1. 分析 {analysis_target} 的语义、情绪、语气和适合追加的表情包氛围；\n"
             "2. 根据图库候选的特征标签，判断是否存在符合语境的表情包或图片。\n"
             "如果有多个候选都符合，请把这些候选 id 都放入 image_ids。\n\n"
-            "bot 的 LLM 回复：\n"
-            f"{reply_text}\n\n"
+            f"{source_label}：\n"
+            f"{source_text}\n\n"
             "图库候选：\n"
             f"{json.dumps(compact_candidates, ensure_ascii=False)}\n\n"
             "输出严格 JSON，格式如下：\n"
             "{\"matched\": true/false, \"image_ids\": [\"候选 id\"], \"image_id\": \"兼容字段，可填首个候选 id 或空字符串\", "
             "\"need\": \"适合的表情包语境摘要\", \"reason\": \"简短理由\", "
             "\"confidence\": 0.0}\n"
-            "只有当图库中确实有图片适合追加到这条回复后面时 matched 才为 true。"
+            f"{matched_rule}"
         )
 
     def _select_proactive_emoji(
         self,
         decision: dict[str, Any],
         candidates: list[dict[str, Any]],
+        cfg: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if not decision.get("matched"):
+            self._log_proactive_emoji_debug(cfg, "selection stopped; LLM decision unmatched.")
             return None
         if self._to_float(decision.get("confidence"), 0.0) < 0.35:
+            self._log_proactive_emoji_debug(
+                cfg,
+                "selection stopped; confidence below threshold: %s",
+                decision.get("confidence"),
+            )
             return None
         candidate_by_id = {str(item["id"]): item for item in candidates}
         image_ids = self._normalize_ids(decision.get("image_ids", []))
@@ -354,7 +945,15 @@ class RetrievalMixin:
             for image_id in image_ids
             if image_id in candidate_by_id
         ]
-        return random.choice(matched_items) if matched_items else None
+        selected = random.choice(matched_items) if matched_items else None
+        self._log_proactive_emoji_debug(
+            cfg,
+            "selection finished; requested_ids=%s matched_count=%d selected=%s",
+            image_ids,
+            len(matched_items),
+            selected.get("rel_path") if selected else None,
+        )
+        return selected
 
     def _hidden_rel_paths(self) -> set[str]:
         rel_paths = set()

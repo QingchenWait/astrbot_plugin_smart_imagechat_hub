@@ -39,10 +39,17 @@ except Exception:  # pragma: no cover - Pillow is provided by AstrBot
 
 
 PLUGIN_NAME = "astrbot_plugin_smart_imagechat_hub"
-PLUGIN_VERSION = "v2.8.5"
+PLUGIN_VERSION = "v2.8.6"
 SKIP_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_skip_proactive_emoji"
 PENDING_PROACTIVE_EMOJI_EXTRA_KEY = "smart_imagesender_pending_proactive_emoji"
 PROACTIVE_EMOJI_DECISION_EXTRA_KEY = "smart_imagesender_proactive_emoji_decision"
+PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY = (
+    "smart_imagesender_proactive_emoji_internal_llm"
+)
+PROACTIVE_EMOJI_TASK_EXTRA_KEY = "smart_imagesender_proactive_emoji_task"
+PROACTIVE_EMOJI_FAST_FALLBACK_EXTRA_KEY = (
+    "smart_imagesender_proactive_emoji_fast_fallback"
+)
 PENDING_MEME_COMBAT_IMAGE_EXTRA_KEY = "smart_imagesender_pending_meme_combat_image"
 PENDING_SEND_IMAGE_STYLE_CLEANUP_EXTRA_KEY = (
     "smart_imagesender_pending_send_image_style_cleanup"
@@ -201,7 +208,7 @@ TAG_CATEGORY_PRESETS = {
 TAG_CATEGORY_LABEL_TO_KEY = {
     label: key for key, label in TAG_CATEGORY_PRESETS.items()
 }
-SEARCH_CANDIDATE_LIMIT = 16
+SEARCH_CANDIDATE_LIMIT = 10
 SEARCH_SELECTION_POOL_SIZE = 3
 WAKE_FILTER_IMAGE_REQUEST_HINTS = (
     "表情包",

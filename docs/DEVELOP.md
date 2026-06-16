@@ -1,6 +1,78 @@
 # DEVELOP
 
+# v2.8.6
+
+- Added proactive emoji `user_message_fast_prefilter` retrieval mode. It is
+  limited to proactive emoji replies, keeps the existing library format, runs
+  local multi-tag fine ranking in `backend/proactive_fast_retrieval.py`, sends
+  the LLM at most `SEARCH_CANDIDATE_LIMIT` candidates, and cancels an unfinished
+  background task at `on_decorating_result` instead of waiting. If the task is
+  still pending, the flow applies a conservative local fallback only for direct
+  tag, filename, or strong semantic hits; generic requests skip sending.
+  The persisted config value remains `user_message_fast_prefilter`; v2.8.6 only
+  changes the display label to "依据发言内容本地精排，进行小规模并发检索（速度最快）" and the proactive
+  emoji behavior behind that value. Normal user search, meme-combat, captioning,
+  and library item formats do not call this module or require migration.
+
+- 新增 `proactive_emoji_reply.retrieval_mode`，用于控制“对话中主动发送表情包”的检索触发模式。
+  默认值是 `bot_reply_serial`，保持 v2.8.5 及以前逻辑：等待 bot 的普通 LLM 回复生成后，在
+  `on_decorating_result` 中读取 bot 回复文本，再串行执行主动表情包语义分析、候选选择和发送挂载。
+- 新增 `user_message_parallel` 并发模式：在 `on_llm_request` 阶段读取用户发言文本，主 LLM 回复开始前通过
+  `_start_parallel_proactive_emoji` 创建后台任务。后台任务复用主动表情包候选、分析和选择逻辑，只把分析输入从
+  bot 回复文本改为用户发言文本；主 LLM 回复完成后，`_maybe_append_proactive_emoji` 等待该任务结果并决定是否嵌入，
+  或由 `after_message_sent` 走独立发送路径。
+- 并发边界：该模式只为同一次普通 LLM 对话额外启动 1 个主动表情包分析任务，目标并发量为 2
+  （主 LLM 回复 + 表情包检索分析）。图像检索、候选排序、发送样式、清理逻辑和 provider fallback 规则保持不变。
+- 兼容性：`retrieval_mode` 非法或缺失时归一化为 `bot_reply_serial`，旧配置无需迁移。概率命中仍通过
+  `PROACTIVE_EMOJI_DECISION_EXTRA_KEY` 每条消息只抽样一次。
+- 递归保护：主动表情包内部 LLM 分析请求会设置
+  `PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY` marker；`on_llm_request` 检测到该 marker 时直接返回，避免插件自身分析请求再次触发并发入口。
+- Page 和原生 `_conf_schema.json` 均新增下拉菜单。Plugin Page 在串行模式且 provider 文本包含
+  `mimo`、`qwen` 或 `通义` 时显示黄色提示：“注意：非 GPT 模型可能因 API 请求频率限制，导致串行检索速度偏慢。建议使用并发检索模式。”
+- 新增 `proactive_emoji_reply.debug_mode`，默认 `false`。该开关只控制“对话中主动发送表情包”流程的逐步排查日志：
+  串行/并行路径、候选查询、LLM 查询、成功状态、选择/发送、模型 API 异常状态等。关闭时不为该功能新增 info 日志，
+  不改变图像检索核心逻辑，也不影响其他功能的日志输出。
+- 调试注意：排查并发模式时应同时检查 `on_llm_request` 是否启动任务、event extra 中的
+  `PROACTIVE_EMOJI_TASK_EXTRA_KEY` 是否被设置、`on_decorating_result` 是否取得普通 LLM 结果，以及内部 marker 是否阻止了递归触发。
+  若只需要定位主动表情包链路，可临时开启 `debug_mode`，通过日志确认当前进入的是串行还是并行路径、候选是否为空、LLM 分析是否成功、
+  以及最终是否选择并发送了图片。
+
 # v2.8.5
+
+- Follow-up P0 bugfix without a version bump: isolated OpenAI-compatible
+  provider/client lanes are now treated as a high-risk concurrency feature and
+  remain disabled by default. `backend/llm_context.py` only enables them when a
+  feature explicitly inherits AstrBot's current session model: proactive emoji
+  analysis with empty or unavailable `analysis_provider_id`, or meme-combat
+  battle image analysis with empty or unavailable battle `analysis_provider_id`.
+  These are the only two lane-enabled entrances. In inherited battle mode, the
+  two sampled images are analyzed as two concurrent single-image semantic
+  requests and their keywords are merged; when a provider is explicitly
+  configured, battle analysis keeps the original single two-image request and
+  does not enable a lane. Normal user search, automatic captioning,
+  meme-combat matching, and other explicit-provider analysis calls do not use
+  isolated lanes. Active lanes are capped at 3 per provider. Existing timeout
+  values, provider fallback order, retrieval, sending, and post-send flows are
+  unchanged; this is not a sleep-based or timeout-extension workaround.
+  `main.py` only closes idle lanes during plugin termination.
+
+- Follow-up TimeoutError fix without a version bump: the group meme-combat
+  battle image analysis call layer now prepares battle-only lightweight JPEG
+  inputs before sending images to the visual LLM. `_analyze_meme_battle_images`
+  converts each sampled image to a temporary JPEG with longest edge 768 and
+  quality 82 via `asyncio.to_thread`, then removes those temporary files in
+  `finally`; if Pillow is unavailable or preparation fails, it falls back to the
+  existing caption-image preparation helper and then to the original image.
+  The battle trigger log now records `group_id`, sampled event count, parsed
+  image count, and `provider_mode`. In inherited current-model mode, the two
+  sampled images still use concurrent single-image semantic requests, but
+  `asyncio.gather(..., return_exceptions=True)` lets one successful image
+  analysis merge keywords and continue; only two failed image analyses abort the
+  battle. Explicit provider mode still uses one two-image request, now with the
+  prepared lightweight paths. Failure logs best-effort include provider error
+  `status_code`, `code`, `type`, `request_id`, and message. Timeout values,
+  sleeps, retrieval, ranking, image selection, send behavior, and post-send
+  cleanup remain unchanged.
 
 - Added the `send_image_style` config group for "发送表情包时统一样式 (GIF)".
   The group is exposed in both native `_conf_schema.json` and the Page More

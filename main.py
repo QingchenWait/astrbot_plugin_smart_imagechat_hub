@@ -173,6 +173,7 @@ class SmartImageSenderPlugin(
             except asyncio.CancelledError:
                 pass
         await self._wait_caption_cleanup_tasks()
+        await self._close_openai_compatible_provider_lanes()
         self._save_index()
         self._save_collection_pool()
         self._save_discarded_collection()
@@ -298,6 +299,13 @@ class SmartImageSenderPlugin(
     @filter.on_decorating_result(priority=20)
     async def on_decorating_result(self, event: AstrMessageEvent):
         await self._maybe_append_proactive_emoji(event)
+
+    @filter.on_llm_request(priority=20)
+    async def on_llm_request(self, event: AstrMessageEvent, req):
+        await self._start_parallel_proactive_emoji(
+            event,
+            event.get_message_str() or "",
+        )
 
     @filter.after_message_sent(priority=20)
     async def after_message_sent(self, event: AstrMessageEvent):

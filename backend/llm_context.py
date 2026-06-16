@@ -1,3 +1,6 @@
+import copy
+import inspect
+
 from .common import AstrMessageEvent, MODEL_FALLBACK_CONFIG_KEY, asyncio, logger, time
 
 
@@ -7,6 +10,12 @@ MODEL_FALLBACK_MAX_MANUAL_PROVIDERS = 8
 MODEL_PROVIDER_FAILURE_COOLDOWN_SECONDS = 90
 MODEL_PROVIDER_TIMEOUT_SECONDS = 18
 IMAGE_CAPTION_PROVIDER_MIN_INTERVAL_SECONDS = 1.0
+OPENAI_COMPATIBLE_PROVIDER_TYPES = {
+    "openai_chat_completion",
+    "xiaomi_chat_completion",
+}
+OPENAI_COMPATIBLE_ACTIVE_LANES_PER_PROVIDER = 3
+OPENAI_COMPATIBLE_IDLE_LANES_PER_PROVIDER = 2
 
 
 class LLMContextMixin:
@@ -138,6 +147,10 @@ class LLMContextMixin:
             provider_ids.append(provider_id)
         return provider_ids
 
+    def _provider_id_inherits_current_chat_model(self, provider_id: str) -> bool:
+        normalized = str(provider_id or "").strip()
+        return not normalized or normalized not in self._available_chat_provider_ids()
+
     def _model_provider_is_temporarily_failed(self, provider_id: str) -> bool:
         if not provider_id:
             return False
@@ -179,6 +192,311 @@ class LLMContextMixin:
                 return await call_factory()
             finally:
                 self._last_caption_provider_call_at = time.monotonic()
+
+    def _provider_type_name(self, provider) -> str:
+        provider_config = getattr(provider, "provider_config", None)
+        if isinstance(provider_config, dict):
+            provider_type = str(provider_config.get("type") or "").strip()
+            if provider_type:
+                return provider_type
+        try:
+            meta = provider.meta()
+        except Exception:
+            return ""
+        return str(getattr(meta, "type", "") or "").strip()
+
+    def _is_openai_compatible_provider(self, provider) -> bool:
+        if provider is None or not callable(getattr(provider, "text_chat", None)):
+            return False
+        if self._provider_type_name(provider) in OPENAI_COMPATIBLE_PROVIDER_TYPES:
+            return True
+
+        client = getattr(provider, "client", None)
+        if client is None or not hasattr(client, "api_key"):
+            return False
+        names = [
+            provider.__class__.__name__,
+            provider.__class__.__module__,
+            client.__class__.__name__,
+            client.__class__.__module__,
+        ]
+        names.extend(
+            f"{base.__module__}.{base.__name__}"
+            for base in getattr(provider.__class__, "__mro__", ())
+        )
+        return "openai" in " ".join(names).lower()
+
+    def _make_openai_compatible_provider_lane(self, provider):
+        provider_config = getattr(provider, "provider_config", None)
+        provider_settings = getattr(provider, "provider_settings", None)
+        if isinstance(provider_config, dict) and isinstance(provider_settings, dict):
+            lane = provider.__class__(
+                copy.deepcopy(provider_config),
+                copy.deepcopy(provider_settings),
+            )
+            get_model = getattr(provider, "get_model", None)
+            set_model = getattr(lane, "set_model", None)
+            if callable(get_model) and callable(set_model):
+                set_model(get_model())
+            return lane, True
+
+        raise RuntimeError("provider cannot be cloned safely")
+
+    async def _close_openai_compatible_provider_lane(
+        self,
+        lane,
+        closeable_client: bool,
+    ) -> None:
+        if not closeable_client:
+            return
+        terminate_method = getattr(lane, "terminate", None)
+        if callable(terminate_method):
+            result = terminate_method()
+            if inspect.isawaitable(result):
+                await result
+            return
+
+        client = getattr(lane, "client", None)
+        for close_name in ("close", "aclose"):
+            close_method = getattr(client, close_name, None)
+            if not callable(close_method):
+                continue
+            result = close_method()
+            if inspect.isawaitable(result):
+                await result
+            return
+
+    async def _close_stale_openai_compatible_provider_lanes(
+        self,
+        provider_id: str,
+        current_provider_identity: int,
+    ) -> None:
+        lanes_by_key = getattr(self, "_openai_compatible_provider_lanes", None)
+        if not isinstance(lanes_by_key, dict):
+            return
+
+        stale_keys = [
+            key
+            for key in lanes_by_key
+            if isinstance(key, tuple)
+            and len(key) == 2
+            and key[0] == provider_id
+            and key[1] != current_provider_identity
+        ]
+        for key in stale_keys:
+            for lane, closeable_client in lanes_by_key.pop(key, []):
+                await self._close_openai_compatible_provider_lane(
+                    lane,
+                    closeable_client,
+                )
+
+    async def _acquire_openai_compatible_provider_lane(
+        self,
+        provider_id: str,
+        provider,
+    ):
+        if not self._is_openai_compatible_provider(provider):
+            return provider, None, False
+
+        lanes_by_key = getattr(self, "_openai_compatible_provider_lanes", None)
+        if not isinstance(lanes_by_key, dict):
+            lanes_by_key = {}
+            self._openai_compatible_provider_lanes = lanes_by_key
+
+        lane_key = (provider_id, id(provider))
+        await self._close_stale_openai_compatible_provider_lanes(
+            provider_id,
+            id(provider),
+        )
+
+        idle_lanes = lanes_by_key.get(lane_key)
+        if idle_lanes:
+            lane, closeable_client = idle_lanes.pop()
+            return lane, lane_key, closeable_client
+
+        lane, closeable_client = self._make_openai_compatible_provider_lane(provider)
+        return lane, lane_key, closeable_client
+
+    def _openai_compatible_provider_lane_semaphore(self, lane_key):
+        semaphores_by_key = getattr(
+            self,
+            "_openai_compatible_provider_lane_semaphores",
+            None,
+        )
+        if not isinstance(semaphores_by_key, dict):
+            semaphores_by_key = {}
+            self._openai_compatible_provider_lane_semaphores = semaphores_by_key
+
+        semaphore = semaphores_by_key.get(lane_key)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(OPENAI_COMPATIBLE_ACTIVE_LANES_PER_PROVIDER)
+            semaphores_by_key[lane_key] = semaphore
+        return semaphore
+
+    async def _release_openai_compatible_provider_lane(
+        self,
+        lane,
+        lane_key,
+        closeable_client: bool,
+    ) -> None:
+        if lane_key is None:
+            return
+
+        provider_id, provider_identity = lane_key
+        if bool(getattr(self, "_openai_compatible_provider_lanes_closed", False)):
+            await self._close_openai_compatible_provider_lane(lane, closeable_client)
+            return
+
+        current_provider = self.context.get_provider_by_id(provider_id)
+        if current_provider is None or id(current_provider) != provider_identity:
+            await self._close_openai_compatible_provider_lane(lane, closeable_client)
+            return
+
+        lanes_by_key = getattr(self, "_openai_compatible_provider_lanes", None)
+        if not isinstance(lanes_by_key, dict):
+            lanes_by_key = {}
+            self._openai_compatible_provider_lanes = lanes_by_key
+
+        idle_lanes = lanes_by_key.setdefault(lane_key, [])
+        if len(idle_lanes) < OPENAI_COMPATIBLE_IDLE_LANES_PER_PROVIDER:
+            idle_lanes.append((lane, closeable_client))
+        else:
+            await self._close_openai_compatible_provider_lane(lane, closeable_client)
+
+    async def _close_openai_compatible_provider_lanes(self) -> None:
+        lanes_by_key = getattr(self, "_openai_compatible_provider_lanes", None)
+        if not isinstance(lanes_by_key, dict):
+            self._openai_compatible_provider_lanes_closed = True
+            return
+
+        self._openai_compatible_provider_lanes_closed = True
+        idle_lanes = []
+        for lanes in lanes_by_key.values():
+            idle_lanes.extend(lanes)
+        lanes_by_key.clear()
+        for lane, closeable_client in idle_lanes:
+            try:
+                await self._close_openai_compatible_provider_lane(
+                    lane,
+                    closeable_client,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "astrbot_plugin_smart_imagechat_hub: failed to close isolated "
+                    "provider lane during terminate: %s",
+                    str(exc) or type(exc).__name__,
+                )
+
+    async def _call_llm_provider(
+        self,
+        *,
+        provider_id: str,
+        prompt: str,
+        image_urls: list[str] | None,
+        contexts: list | None,
+        system_prompt: str,
+        direct_provider_call: bool,
+        use_isolated_openai_compatible_lane: bool = False,
+    ):
+        contexts = contexts if contexts is not None else []
+        provider = self.context.get_provider_by_id(provider_id)
+        if (
+            use_isolated_openai_compatible_lane
+            and provider is not None
+            and self._is_openai_compatible_provider(provider)
+        ):
+            lane_key = (provider_id, id(provider))
+            semaphore = self._openai_compatible_provider_lane_semaphore(lane_key)
+            await semaphore.acquire()
+            try:
+                try:
+                    lane, lane_key, closeable_client = (
+                        await self._acquire_openai_compatible_provider_lane(
+                            provider_id,
+                            provider,
+                        )
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "astrbot_plugin_smart_imagechat_hub: failed to acquire "
+                        "isolated provider lane for %s; falling back to original "
+                        "provider path: %s",
+                        provider_id,
+                        str(exc) or type(exc).__name__,
+                    )
+                else:
+                    try:
+                        # OpenAI-compatible providers mutate client.api_key during retry.
+                        # Each concurrent plugin request gets its own provider/client lane.
+                        resp = await lane.text_chat(
+                            prompt=prompt,
+                            image_urls=image_urls,
+                            contexts=contexts,
+                            system_prompt=system_prompt,
+                        )
+                    except asyncio.CancelledError:
+                        try:
+                            await self._close_openai_compatible_provider_lane(
+                                lane,
+                                closeable_client,
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                "astrbot_plugin_smart_imagechat_hub: failed to close "
+                                "cancelled isolated provider lane for %s: %s",
+                                provider_id,
+                                str(exc) or type(exc).__name__,
+                            )
+                        raise
+                    except Exception:
+                        try:
+                            await self._close_openai_compatible_provider_lane(
+                                lane,
+                                closeable_client,
+                            )
+                        except Exception as close_exc:
+                            logger.debug(
+                                "astrbot_plugin_smart_imagechat_hub: failed to close "
+                                "failed isolated provider lane for %s: %s",
+                                provider_id,
+                                str(close_exc) or type(close_exc).__name__,
+                            )
+                        raise
+                    else:
+                        try:
+                            await self._release_openai_compatible_provider_lane(
+                                lane,
+                                lane_key,
+                                closeable_client,
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                "astrbot_plugin_smart_imagechat_hub: failed to release "
+                                "isolated provider lane for %s: %s",
+                                provider_id,
+                                str(exc) or type(exc).__name__,
+                            )
+                        return resp
+            finally:
+                semaphore.release()
+
+        if direct_provider_call:
+            if provider is None or not callable(getattr(provider, "text_chat", None)):
+                raise RuntimeError(f"provider {provider_id} is unavailable")
+            return await provider.text_chat(
+                prompt=prompt,
+                image_urls=image_urls,
+                contexts=contexts,
+                system_prompt=system_prompt,
+            )
+
+        return await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            image_urls=image_urls,
+            contexts=contexts,
+            system_prompt=system_prompt,
+        )
 
     async def _model_provider_candidate_ids(
         self,
@@ -241,6 +559,7 @@ class LLMContextMixin:
         allow_no_provider: bool = False,
         use_failure_cooldown: bool = True,
         direct_provider_call: bool = False,
+        use_isolated_openai_compatible_lane: bool = False,
     ):
         provider_ids = await self._model_provider_candidate_ids(
             primary_provider_id=primary_provider_id,
@@ -256,26 +575,17 @@ class LLMContextMixin:
         last_exc: Exception | None = None
         for provider_id in provider_ids:
             try:
-                if direct_provider_call:
-                    provider = self.context.get_provider_by_id(provider_id)
-                    if provider is None or not callable(
-                        getattr(provider, "text_chat", None)
-                    ):
-                        raise RuntimeError(f"provider {provider_id} is unavailable")
-                    llm_call = provider.text_chat(
-                        prompt=prompt,
-                        image_urls=image_urls,
-                        contexts=contexts if contexts is not None else [],
-                        system_prompt=system_prompt,
-                    )
-                else:
-                    llm_call = self.context.llm_generate(
-                        chat_provider_id=provider_id,
-                        prompt=prompt,
-                        image_urls=image_urls,
-                        contexts=contexts if contexts is not None else [],
-                        system_prompt=system_prompt,
-                    )
+                llm_call = self._call_llm_provider(
+                    provider_id=provider_id,
+                    prompt=prompt,
+                    image_urls=image_urls,
+                    contexts=contexts,
+                    system_prompt=system_prompt,
+                    direct_provider_call=direct_provider_call,
+                    use_isolated_openai_compatible_lane=(
+                        use_isolated_openai_compatible_lane
+                    ),
+                )
                 if timeout_seconds is None or self._to_float(timeout_seconds, 0.0) <= 0:
                     resp = await llm_call
                 else:

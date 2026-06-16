@@ -773,6 +773,7 @@ class CaptionLibraryMixin:
         return {
             **cfg,
             "provider_options": self._chat_provider_options(),
+            "inherited_provider_label": self._current_chat_provider_label(),
             "updated_at": int(time.time()),
         }
 
@@ -907,16 +908,25 @@ class CaptionLibraryMixin:
     def _normalize_proactive_emoji_config(self, raw: Any) -> dict[str, Any]:
         raw = raw if isinstance(raw, dict) else {}
         provider_id = str(raw.get("analysis_provider_id") or "").strip()
+        retrieval_mode = str(raw.get("retrieval_mode") or "").strip()
+        if retrieval_mode not in {
+            "bot_reply_serial",
+            "user_message_parallel",
+            "user_message_fast_prefilter",
+        }:
+            retrieval_mode = "bot_reply_serial"
         probability = self._to_float(raw.get("trigger_probability"), 0.25)
         return {
             "enabled": self._to_bool(raw.get("enabled"), False),
             "analysis_provider_id": provider_id,
+            "retrieval_mode": retrieval_mode,
             "meme_only": self._to_bool(raw.get("meme_only"), True),
             "embed_in_conversation": self._to_bool(
                 raw.get("embed_in_conversation"),
                 True,
             ),
             "trigger_probability": str(max(0.0, min(probability, 1.0))),
+            "debug_mode": self._to_bool(raw.get("debug_mode"), False),
         }
 
     def _chat_provider_options(self) -> list[dict[str, str]]:
@@ -937,6 +947,29 @@ class CaptionLibraryMixin:
                 label = f"{label} - {model_name}"
             options.append({"id": provider_id, "label": label})
         return options
+
+    def _current_chat_provider_label(self) -> str:
+        try:
+            provider = self.context.get_using_provider()
+        except Exception:
+            return ""
+        if provider is None:
+            return ""
+        try:
+            meta = provider.meta()
+        except Exception:
+            return ""
+        provider_id = str(getattr(meta, "id", "") or "").strip()
+        provider_type = str(getattr(meta, "type", "") or "").strip()
+        model_name = str(
+            getattr(meta, "model", "") or getattr(provider, "model_name", "") or ""
+        ).strip()
+        label = provider_id
+        if provider_type:
+            label = f"{provider_type} ({provider_id})"
+        if model_name and model_name not in label:
+            label = f"{label} - {model_name}"
+        return label
 
     def _tag_category_settings(self) -> dict[str, Any]:
         raw = self.config.get(TAG_CATEGORY_CONFIG_KEY, {})

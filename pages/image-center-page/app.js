@@ -234,6 +234,12 @@ const els = {
   proactiveEmojiProviderInput: document.getElementById(
     "proactiveEmojiProviderInput",
   ),
+  proactiveEmojiRetrievalModeInput: document.getElementById(
+    "proactiveEmojiRetrievalModeInput",
+  ),
+  proactiveEmojiRetrievalModeWarning: document.getElementById(
+    "proactiveEmojiRetrievalModeWarning",
+  ),
   proactiveEmojiMemeOnlyInput: document.getElementById(
     "proactiveEmojiMemeOnlyInput",
   ),
@@ -242,6 +248,9 @@ const els = {
   ),
   proactiveEmojiProbabilityInput: document.getElementById(
     "proactiveEmojiProbabilityInput",
+  ),
+  proactiveEmojiDebugModeInput: document.getElementById(
+    "proactiveEmojiDebugModeInput",
   ),
   proactiveEmojiMessage: document.getElementById("proactiveEmojiMessage"),
   proactiveEmojiSaveButton: document.getElementById("proactiveEmojiSaveButton"),
@@ -471,7 +480,7 @@ const els = {
 };
 
 const pluginApiBase = "/api/plug/astrbot_plugin_smart_imagechat_hub";
-const PLUGIN_VERSION = "v2.8.5";
+const PLUGIN_VERSION = "v2.8.6";
 let bridge = window.AstrBotPluginPage || null;
 let bridgeReady = false;
 let bridgeUnavailable = false;
@@ -558,6 +567,12 @@ let modelFallbackConfigCache = {
   provider_options: [],
   astrbot_fallback_provider_ids: [],
 };
+let proactiveEmojiInheritedProviderLabel = "";
+const proactiveEmojiRetrievalModes = new Set([
+  "bot_reply_serial",
+  "user_message_parallel",
+  "user_message_fast_prefilter",
+]);
 let autoCollectionConfigCache = {
   pending_pool_limit: 100,
   solidified_library_limit: 300,
@@ -4324,16 +4339,26 @@ function closeProactiveEmojiDialog() {
 }
 
 function fillProactiveEmojiDialog(config) {
+  proactiveEmojiInheritedProviderLabel = String(
+    config.inherited_provider_label || "",
+  );
   els.proactiveEmojiEnabledInput.checked = config.enabled === true;
   els.proactiveEmojiMemeOnlyInput.checked = config.meme_only !== false;
   els.proactiveEmojiEmbedInput.checked = config.embed_in_conversation !== false;
   els.proactiveEmojiProbabilityInput.value = String(
     config.trigger_probability ?? "0.25",
   );
+  els.proactiveEmojiDebugModeInput.checked = config.debug_mode === true;
+  els.proactiveEmojiRetrievalModeInput.value = proactiveEmojiRetrievalModes.has(
+    config.retrieval_mode,
+  )
+    ? config.retrieval_mode
+    : "bot_reply_serial";
   renderProactiveEmojiProviderOptions(
     Array.isArray(config.provider_options) ? config.provider_options : [],
     config.analysis_provider_id || "",
   );
+  renderProactiveEmojiRetrievalModeWarning();
 }
 
 function renderProactiveEmojiProviderOptions(options, selectedId) {
@@ -4342,6 +4367,31 @@ function renderProactiveEmojiProviderOptions(options, selectedId) {
     options,
     selectedId,
   );
+}
+
+function renderProactiveEmojiRetrievalModeWarning() {
+  const warning = els.proactiveEmojiRetrievalModeWarning;
+  if (!warning) {
+    return;
+  }
+  const retrievalMode = els.proactiveEmojiRetrievalModeInput.value;
+  const selectedOption =
+    els.proactiveEmojiProviderInput.options[
+      els.proactiveEmojiProviderInput.selectedIndex
+    ];
+  const providerText = `${els.proactiveEmojiProviderInput.value || ""} ${
+    selectedOption?.textContent || ""
+  } ${
+    els.proactiveEmojiProviderInput.value
+      ? ""
+      : proactiveEmojiInheritedProviderLabel
+  }`.toLowerCase();
+  const shouldWarn =
+    retrievalMode === "bot_reply_serial" &&
+    (providerText.includes("mimo") ||
+      providerText.includes("qwen") ||
+      providerText.includes("通义"));
+  warning.classList.toggle("is-hidden", !shouldWarn);
 }
 
 function renderProviderOptions(selectEl, options, selectedId) {
@@ -4550,11 +4600,17 @@ function readProactiveEmojiDialog() {
   return {
     enabled: els.proactiveEmojiEnabledInput.checked,
     analysis_provider_id: els.proactiveEmojiProviderInput.value,
+    retrieval_mode: proactiveEmojiRetrievalModes.has(
+      els.proactiveEmojiRetrievalModeInput.value,
+    )
+      ? els.proactiveEmojiRetrievalModeInput.value
+      : "bot_reply_serial",
     meme_only: els.proactiveEmojiMemeOnlyInput.checked,
     embed_in_conversation: els.proactiveEmojiEmbedInput.checked,
     trigger_probability: String(
       clampProbability(els.proactiveEmojiProbabilityInput.value),
     ),
+    debug_mode: els.proactiveEmojiDebugModeInput.checked,
   };
 }
 
@@ -5679,6 +5735,14 @@ els.captionProviderInput.addEventListener("change", () => {
 els.memeCombatBattleProviderInput.addEventListener("change", () => {
   renderMemeCombatBattleProviderWarning(els.memeCombatBattleProviderInput.value);
 });
+els.proactiveEmojiProviderInput.addEventListener(
+  "change",
+  renderProactiveEmojiRetrievalModeWarning,
+);
+els.proactiveEmojiRetrievalModeInput.addEventListener(
+  "change",
+  renderProactiveEmojiRetrievalModeWarning,
+);
 els.warningCaptionProviderInput.addEventListener(
   "change",
   saveProviderWarningSelection,

@@ -6,7 +6,7 @@ configuration semantics change.
 
 ## Version
 
-- Current plugin version: `v2.8.5`
+- Current plugin version: `v2.8.6`
 - AstrBot requirement: `>=4.24.2`
 - Main entry: `main.py`
 - Backend package: `backend/`
@@ -40,6 +40,7 @@ astrbot_plugin_smart_imagechat_hub/
 |   |-- auto_collection.py
 |   |-- image_management.py
 |   |-- meme_combat.py
+|   |-- proactive_fast_retrieval.py
 |   |-- retrieval.py
 |   |-- tagging.py
 |   `-- utils.py
@@ -105,7 +106,20 @@ astrbot_plugin_smart_imagechat_hub/
   keywords.
 - `reply_after_search`: Custom/fallback replies for user image search.
 - `proactive_emoji_reply`: Controls probabilistic proactive emoji/image replies
-  after normal LLM responses.
+  after normal LLM responses. `retrieval_mode` defaults to
+  `bot_reply_serial`, which waits for the bot reply text and then performs the
+  original serial proactive retrieval. `user_message_parallel` starts one
+  background proactive analysis from the user message before the main LLM reply
+  request, so the intended concurrency is two calls for one dialogue turn: the
+  normal LLM reply plus proactive emoji analysis. `user_message_fast_prefilter`
+  also starts from the user message, but first applies local multi-tag fine
+  ranking, sends at most `SEARCH_CANDIDATE_LIMIT` candidates to the LLM, and
+  cancels the background task at result decoration time if it has not completed,
+  using a conservative local fallback only for direct tag, filename, or strong
+  semantic hits, otherwise skipping the image. `debug_mode` defaults to
+  `false`; when enabled, only the proactive emoji flow emits step-by-step
+  diagnostic info logs for path selection, candidate lookup, LLM analysis,
+  success/failure state, image selection/sending, and model API exceptions.
 - `meme_combat`: Controls group meme-combat behavior. The top-level `enabled`
   switch gates all runtime tracking. `follow_pattern` sends the same image after
   repeated equal images in a short window and can require those matches to come
@@ -173,11 +187,21 @@ message hooks stay in `main.py` and call methods supplied by backend mixins.
 - `backend/web_api.py`: Page and Web API route registration plus route handlers.
 - `backend/llm_context.py`: LLM persona request, conversation lookup helpers,
   model fallback config normalization, AstrBot fallback-provider discovery, and
-  timeout/cooldown wrapped LLM generation. Image captioning can opt out of the
-  plugin-level short timeout and short provider-failure cooldown, use direct
-  provider calls, and pass through a caption-only request lock so automatic tag
-  generation follows AstrBot's native image-caption request path without
-  bursty compatible-provider calls.
+  timeout/cooldown wrapped LLM generation. OpenAI-compatible isolated
+  provider/client lanes are disabled by default and only enabled when
+  high-risk current-session inheritance needs them: proactive emoji analysis
+  with empty or unavailable `analysis_provider_id`, or meme-combat battle
+  image analysis with empty or unavailable battle `analysis_provider_id`.
+  Those are the only two lane-enabled call entrances. Normal user search,
+  captioning, meme-combat matching, and explicitly configured provider IDs keep
+  the ordinary provider path. Active isolated lanes are capped at 3 per
+  provider. This is a
+  call-layer concurrency guard, not a sleep-based or timeout-extension
+  workaround.
+  Image captioning can opt out of the plugin-level short timeout and short
+  provider-failure cooldown, use direct provider calls, and pass through a
+  caption-only request lock so automatic tag generation follows AstrBot's
+  native image-caption request path without bursty compatible-provider calls.
 - `backend/config_schema.py`: JSON state load/save, config migration, and dynamic
   WebUI schema refresh. It normalizes `send_image_style` during startup so older
   configs gain the default send-style fields without manual migration.
@@ -199,15 +223,31 @@ message hooks stay in `main.py` and call methods supplied by backend mixins.
   sync state, and imagebed caption pause/resume/cancel controls.
 - `backend/meme_combat.py`: bounded group-image observer queue, in-memory image
   window tracking, join-pattern replies, image-burst sends, continuous-image
-  battle detection, quick visual semantic analysis, send-style preparation for
-  local image sends, and cooldown/state reset rules to prevent image loops.
+  battle detection, battle-only lightweight visual-analysis image preparation,
+  quick visual semantic analysis, send-style preparation for local image sends,
+  and cooldown/state reset rules to prevent image loops.
 - `backend/image_management.py`: per-image tag updates, global tags, deletion,
   and Page image item formatting.
+- `backend/proactive_fast_retrieval.py`: proactive-emoji-only fast retrieval
+  helpers for local multi-tag fine ranking, compact fast prompt construction,
+  and conservative local fallback selection. It is only used by the
+  `user_message_fast_prefilter` mode for "对话中主动发送表情包". It does not change
+  library item storage, normal user-search retrieval, meme-combat, or captioning
+  and tagging flows. The persisted config value remains
+  `user_message_fast_prefilter`; the WebUI display label is
+  "依据发言内容本地精排，进行小规模并发检索（速度最快）".
 - `backend/retrieval.py`: local candidate ranking, LLM match/proactive emoji
   prompts, automatic image-caption requests, result parsing, and reply
-  rendering. `_analyze_proactive_emoji` uses AstrBot/provider-level timeout
-  handling so active emoji replies are not cut off by a plugin-side hard
-  timeout. `_caption_image` is the shared automatic tag-generation entry for
+  rendering. Proactive emoji retrieval now supports serial bot-reply analysis
+  and parallel user-message analysis through `_maybe_append_proactive_emoji`,
+  `_start_parallel_proactive_emoji`, and
+  `_run_parallel_proactive_emoji_decision`. `_analyze_proactive_emoji` uses
+  AstrBot/provider-level timeout handling and sets an internal LLM marker so
+  plugin-owned proactive analysis requests do not recursively enter the
+  parallel trigger. `_log_proactive_emoji_debug` and
+  `_log_proactive_emoji_error_debug` are scoped to this feature and only write
+  additional info logs when `proactive_emoji_reply.debug_mode` is enabled.
+  `_caption_image` is the shared automatic tag-generation entry for
   manual uploads, auto-collected solidified images, external imports, imagebed
   imports, and recaptioning. User search and proactive emoji send rendering call
   `_prepare_send_image_path` so send-only GIF conversion does not affect stored
@@ -232,7 +272,8 @@ All routes are registered below `/api/plug/astrbot_plugin_smart_imagechat_hub/`.
   provider options for the Page fallback-priority editor.
 - `GET/POST caption_tag_category_settings`: Read/write caption provider and
   tag-category settings. Optional `recaption_all` queues full regeneration.
-- `GET/POST proactive_emoji_config`: Read/write proactive reply settings.
+- `GET/POST proactive_emoji_config`: Read/write proactive reply settings,
+  including `retrieval_mode` and `debug_mode`.
 - `GET/POST meme_combat_config`: Read/write group meme-combat settings and
   provider options for the battle quick-analysis model.
 - `GET/POST auto_collection_config`: Read/write auto-collection settings.
@@ -473,7 +514,15 @@ Main sections in `pages/image-center-page/index.html`:
   the image filename and suffix, not the full relative library path.
 - Caption settings overlay: `tagCategoryOverlay`, `captionProviderInput`,
   preset/custom category inputs, `tagCategoryRecaptionInput`.
-- Proactive emoji overlay: enable/provider/meme-only/embed/probability inputs.
+- Proactive emoji overlay: enable/provider/retrieval-mode/meme-only/embed/
+  probability/debug inputs. The retrieval mode select maps to
+  `proactive_emoji_reply.retrieval_mode`; the debug switch maps to
+  `proactive_emoji_reply.debug_mode` through
+  `proactiveEmojiDebugModeInput`. When serial mode is selected and the
+  provider text contains `mimo`, `qwen`, or `通义`, the Page shows a yellow
+  `.provider-warning` (`proactiveEmojiRetrievalModeWarning`) directly below the
+  retrieval-mode select, warning that non-GPT models may be slower under serial
+  retrieval and suggesting parallel retrieval.
 - User search overlay: enable switch and request keyword textarea.
 - More config overlay: hidden image paths, startup sync, confidence threshold.
   It also includes `configLibraryDefaultViewModeInput`, a Page-only selector
@@ -594,8 +643,9 @@ live in `backend/` mixin modules.
   loop. The meme-combat observer worker is created lazily on the first observed
   group image event after its total switch is enabled.
 - `terminate`: Cancels background tasks, waits for caption cleanup, persists
-  index/pool/discarded-history data plus imagebed state/discarded data, and
-  clears the auto-collection plugin reference.
+  index/pool/discarded-history data plus imagebed state/discarded data, clears
+  idle OpenAI-compatible provider lanes, and clears the auto-collection plugin
+  reference.
 - `WakeImageRequestFilter.filter`: Allows the user-search handler only for
   explicit wake contexts: private chat, `event.is_at_or_wake_command`, or an
   explicit configured AstrBot `wake_prefix` appearing in the current message.
@@ -613,6 +663,17 @@ live in `backend/` mixin modules.
   switch, explicit wake state, and request keyword before syncing the library,
   reranking candidates, asking the LLM for a shortlist, and sending one image.
 - `on_decorating_result`: Proactive emoji/image append hook for LLM replies.
+  In `bot_reply_serial` mode it analyzes the generated bot reply text at this
+  point. In `user_message_parallel` mode it waits for the background proactive
+  analysis task started before the main LLM request, then applies the selected
+  image if available. In `user_message_fast_prefilter` mode it does not wait
+  for an unfinished task; it cancels the task and applies the local fallback
+  candidate only when the local ranker found a direct tag, filename, or strong
+  semantic hit.
+- `on_llm_request`: Starts the proactive emoji background task in
+  `user_message_parallel` or `user_message_fast_prefilter` mode from the
+  current user message. It ignores plugin-owned proactive LLM analysis requests marked by
+  `PROACTIVE_EMOJI_INTERNAL_LLM_EXTRA_KEY`.
 - `after_message_sent`: Sends queued independent proactive image replies and
   deferred meme-combat burst sends. For send-style temporary GIFs that were not
   handed off to the AstrBot event lifecycle, it also performs the deferred
@@ -675,13 +736,39 @@ The user search flow is deliberately lightweight:
   `image_burst.burst_count` related images.
 - Battle mode detects a streak of image-only messages inside
   `battle.time_window_seconds`. At `battle.continuous_image_count`, it samples
-  two images, resolves them only at trigger time, calls the configured quick
-  analysis provider or the current AstrBot session provider, and searches the
-  local library from the compact semantic keywords. After sending, the window is
-  cleared to avoid self-trigger loops. Since v2.6.0 it also allows only one
-  running battle task per group, clears the streak as soon as a battle is
-  launched, caps global battle tasks with `MEME_COMBAT_MAX_BATTLE_TASKS`, and
-  applies a short per-group failure cooldown when analysis fails.
+  two images and resolves them only at trigger time. The trigger log includes
+  `group_id`, candidate sample count, parsed image count, and whether the
+  analysis provider mode is inherited or explicit. Before visual analysis,
+  `_analyze_meme_battle_images` calls
+  `_prepare_meme_battle_analysis_image_input` for each sampled image. That
+  helper writes a temporary battle-only JPEG through `asyncio.to_thread`,
+  clamps the longest edge to `MEME_COMBAT_ANALYSIS_IMAGE_MAX_EDGE` (`768`), uses
+  `MEME_COMBAT_ANALYSIS_IMAGE_JPEG_QUALITY` (`82`), handles alpha by compositing
+  on white, and records original/prepared byte sizes. Temporary files are
+  removed by `_cleanup_temp_paths` in the caller's `finally` block. If Pillow is
+  unavailable or the battle-specific preparation fails, it falls back to
+  `_prepare_caption_image_input`; if that also fails, the original image path is
+  sent to the provider.
+- If battle `analysis_provider_id` is empty or no longer exists in the
+  available chat provider list, the battle inherits the current AstrBot session
+  model, analyzes the two sampled lightweight images as two concurrent
+  single-image semantic requests, then merges their keywords before local
+  retrieval. This inherited path is one of the two isolated-lane-enabled
+  entrances. The concurrent gather uses `return_exceptions=True`; a single
+  successful image analysis is enough to continue with merged keywords, while
+  two failed image analyses raise a battle analysis error. Failure logs include
+  best-effort provider details: `status_code`, `code`, `type`, `request_id`, and
+  message.
+- If a provider is explicitly configured, the battle keeps the original single
+  two-image quick-analysis request and does not enable an isolated lane, but it
+  still passes the prepared lightweight image paths to the provider. The
+  TimeoutError fix intentionally does not change timeout constants, sleeps,
+  retrieval, ranking, image selection, send behavior, or post-send cleanup.
+  After sending, the window is cleared to avoid self-trigger loops. Since
+  v2.6.0 it also allows only one running battle task per group, clears the
+  streak as soon as a battle is launched, caps global battle tasks with
+  `MEME_COMBAT_MAX_BATTLE_TASKS`, and applies a short per-group failure cooldown
+  when analysis fails.
 
 ### Captioning And Indexing
 
@@ -861,14 +948,29 @@ The user search flow is deliberately lightweight:
   normal plugin-owned call is wrapped in a bounded timeout. Passing
   `timeout_seconds=None` or `<= 0` disables the plugin-level `wait_for` wrapper,
   which is used by automatic image captioning and proactive emoji analysis so
-  provider-native timeout and retry behavior is preserved.
+  provider-native timeout and retry behavior is preserved. Isolated
+  OpenAI-compatible provider/client lanes are opt-in per call and only used by
+  current-session inherited proactive emoji analysis or current-session
+  inherited meme-combat battle image analysis. A provider id is treated as
+  inherited when it is empty or absent from the available chat provider list.
+  The cap is 3 active lanes per provider. Ordinary user search, caption
+  requests, meme-combat matching, and any analysis call with an explicit valid
+  provider ID keep the original
+  `context.llm_generate()` or direct `provider.text_chat()` path. The isolated
+  lane exists to avoid shared mutable client state, including `client.api_key`
+  and retry state, under the two enabled concurrent inheritance paths.
 - `_plugin_config_snapshot`, `_update_plugin_config_from_payload`: Page config
   IO. They include the Page-only `imagebed_import` snapshot and restart the
   imagebed sync task when the payload changes.
 - `_tag_category_settings_snapshot`, `_normalize_tag_category_settings`: Caption
   category config IO.
 - `_proactive_emoji_snapshot`, `_normalize_proactive_emoji_config`: Proactive
-  reply config IO. `_maybe_append_proactive_emoji` also sets
+  reply config IO. Normalization accepts only `bot_reply_serial`,
+  `user_message_parallel`, and `user_message_fast_prefilter`; missing or invalid values fall back to
+  `bot_reply_serial`. `user_message_fast_prefilter` is still the stored config
+  value for the WebUI label "依据发言内容本地精排，进行小规模并发检索（速度最快）"; no config migration is
+  needed. `_maybe_append_proactive_emoji` and
+  `_start_parallel_proactive_emoji` also set
   `PROACTIVE_EMOJI_DECISION_EXTRA_KEY` after the message is eligible so one
   message only samples `trigger_probability` once.
 - `_meme_combat_snapshot`, `_normalize_meme_combat_config`: Group meme-combat
