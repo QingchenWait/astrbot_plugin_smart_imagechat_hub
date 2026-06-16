@@ -2,44 +2,32 @@
 
 ## v2.8.6
 
-### Added
+### 更新日志
+- **新增**：`对话中主动发送表情包` 功能中，新增 `表情包检索模式` 配置项。
 
-- 新增“对话中主动发送表情包”的“表情包检索模式”配置：
-  `bot_reply_serial` 保持原串行逻辑，依据 bot 生成的回复内容检索；
-  `user_message_parallel` 依据用户发言内容并发检索，减少主动表情包等待时间。
-- 新增第三种主动表情包检索模式 `user_message_fast_prefilter`，展示为“依据发言内容本地精排，进行小规模并发检索（速度最快）”，只服务主动表情包流程。
-- 该模式沿用配置值 `user_message_fast_prefilter`；v2.8.6 仅调整 WebUI 展示名称和主动表情包流程内的行为。
-- 新增“对话中主动发送表情包”的“调试模式”开关，默认关闭；开启后仅输出该功能的逐步排查日志。
-- Plugin Page 和原生 `_conf_schema.json` 均提供检索模式下拉选择。
-- Plugin Page 在串行模式且 provider 文本包含 mimo / qwen / 通义时显示黄色速度提示，建议切换并发检索模式。
-- 新增 `auto_image_collection.non_meme_filter_strategy`，提供 `none`、`loose`、`strict` 三档非表情包图像过滤策略。
+  我们发现，非 GPT 模型可能因 API 请求频率限制，导致带图回复的速度非常缓慢。因此，我们为表情包检索流程，添加了两种**更加快速的并发检索策略**，以优化 LLM API 响应速度。
 
-### Changed
+  可在以下三种模式中，根据响应速度需求，任选其一：
+  1. `依据 bot 生成的回复内容，进行串行检索（更加准确）`：插件原始策略，首先通过 LLM 生成 bot 回复用户的内容，再依据回复内容串行检索表情包，语境识别更准确。
+  2. `依据用户发言内容，进行并发检索（速度更快）`：依据用户向 bot 输入的发言内容，以并发形式同步调用 LLM 进行回复生成+表情包检索，速度更快；
+  3. `依据发言内容本地精排，进行小规模并发检索（速度最快）`：先按标签库和强语义命中，进行本地轻量化图像库精排，获取一组小规模候选图像，随后以并发形式进行小规模检索。响应速度是三种策略中最快的。
 
-- 并发检索模式会在主 LLM 请求前，用同一 provider 启动后台检索分析任务；目标并发边界为主 LLM 回复 + 表情包检索分析共 2 路。
-- 本地精排+并发模式会先按标签库和强语义命中精排候选，再给 LLM 与普通搜图一致规模的候选集合；主回复装饰阶段若后台任务未完成，会直接取消任务，并仅在高置信命中时使用本地兜底候选或跳过发图。
-- 图像检索、候选排序和选图核心逻辑保持不变，仅调整主动表情包分析的调用时机和输入文本来源；普通搜图、群聊智能斗图、图库格式和打标流程不受影响。
-- 主动表情包调试日志限定在该功能流程内；关闭调试模式时不新增 info 日志，也不改变其他功能日志输出。
-- Plugin Page 中 mimo / qwen / 通义 + 串行模式提示移动到“表情包检索模式”下拉菜单正下方，并复用黄色小字 `.provider-warning` 样式。
-- 自动收集的旧布尔配置 `filter_obvious_non_meme_images` 继续兼容迁移：旧 `false` 归一化为 `none`，旧 `true` 或缺省归一化为 `loose`，新 `non_meme_filter_strategy` 优先。
-- Plugin Page 自动收集弹窗将原过滤 checkbox 改为三档 select，并显示灰色说明；保存时写入新键，不再写旧布尔键。原生 `_conf_schema.json` 同步改为 string 下拉。
-- `strict` 策略只读取 OneBot/NapCat raw message 结构字段判定是否为明确表情包，不下载、不读图、不调用 LLM；后续下载仍由后台 worker 处理。
+  ( 提示：如果使用 Qwen / MiMO / 通义等非 GPT 模型，且**串行模式下响应较慢**，建议改用并发检索模式。)
 
-### Fixed
+- **新增**：`对话中主动发送表情包` 功能中，新增 `表情包检索模式` 配置项，控制自动收集时如何处理照片、截图等非表情包图像。
 
-- Fixed meme-combat battle streak detection for OneBot/NapCat image-only
-  summaries such as `[CQ:image,...]` and `<image ...>`. These summaries no
-  longer count as plain text, so image-only group battles can reach the
-  `continuous_image_count` trigger while mixed image+text messages still reset
-  the streak.
+  1. `不过滤`：去重后的全部图像，都会进入待筛选图片池；
+  2. `宽松过滤 (保留照片等普通图像)`：跳过明显的屏幕截图等，正常图片或无法区分的图像仍会保留。
+  3. `严格过滤 (只保留表情包)` ：只收 OneBot/NapCat 明确标记为表情包的图片，过滤其他全部图像。
 
-- 新增内部 marker，避免插件自身的主动表情包 LLM 分析请求递归触发并发检索入口。
+- **修复**：`群聊智能斗图` 功能中，修复 `参与团战` 功能可能无法触发的问题。
 
-### Documentation
+### 插件源
 
-- 补充主动表情包检索模式、默认值、使用建议、调用时机和调试注意事项。
-- 补充主动表情包调试模式、日志边界和 Plugin Page 提示位置说明。
-- 补充自动收集非表情包过滤策略、兼容迁移、Page/WebUI 映射和 strict raw message 判定说明。
+- 我们整合了 [芙提雅 ONLINE](https://www.bilibili.com/video/BV1qR7r6tEs1) 聊天机器人的所有功能增强插件，建立了**第三方专属插件源**。
+- 可访问 [https://qingchenwait.github.io/fritia_online_guide/plugin-source.html](https://qingchenwait.github.io/fritia_online_guide/plugin-source.html) 查看插件列表、获取订阅链接和导入方法。
+
+
 
 ## v2.8.5
 

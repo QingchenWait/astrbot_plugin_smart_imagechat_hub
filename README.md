@@ -104,11 +104,6 @@ LLM 驱动的 AstrBot 一体化智能图片对话插件。
    - **图片连发**：bot 有一定概率，在某次图片回复中，连续发送多张表情包。
    - **参与团战**：如果群聊进入斗图团战，bot 会抽取其中 2 张图片快速分析语义，从自己的图库中搜索表情包参与团战。
 
-   为避免循环刷图，bot 自己发图后会清空当前群聊窗口内的图片统计，并且图片连发和团战内置冷却时间。
-   OneBot/NapCat image-only summaries such as `[CQ:image,...]` and `<image ...>`
-   are treated as images for the battle streak; only real Plain text or mixed
-   image+text messages interrupt the continuous-image count.
-
 ## ⚙️ 在全新的 "Plugin UI Page" WebUI 中进行进一步配置
 
 本插件同时维护 "Plugin UI Page" 和 "AstrBot 标准插件配置页面" 两套前端。
@@ -175,10 +170,6 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 | 参与团战 - 统计的时间窗口 | 统计连续图片对话的时间窗口，单位秒。 | `30` |
 | 参与团战 - 对话中连续出现图片的数量 | 达到该连续图片数量后触发快速语义分析。 | `6` |
 | 参与团战 - 快速语义分析 LLM 模型 | 继承 AstrBot 系统配置中的模型提供商列表；留空或不可用时继承当前会话模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 mimo-v2.5。 | `[]` |
-
-`[CQ:image,...]` / `<image ...>` and similar OneBot/NapCat image-only message
-summaries do not count as text for "参与团战"; Plain text and image+text
-messages still reset the continuous-image streak.
 
 ### 5. 插件自动偷图
 
