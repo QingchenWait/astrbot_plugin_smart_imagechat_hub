@@ -105,6 +105,9 @@ LLM 驱动的 AstrBot 一体化智能图片对话插件。
    - **参与团战**：如果群聊进入斗图团战，bot 会抽取其中 2 张图片快速分析语义，从自己的图库中搜索表情包参与团战。
 
    为避免循环刷图，bot 自己发图后会清空当前群聊窗口内的图片统计，并且图片连发和团战内置冷却时间。
+   OneBot/NapCat image-only summaries such as `[CQ:image,...]` and `<image ...>`
+   are treated as images for the battle streak; only real Plain text or mixed
+   image+text messages interrupt the continuous-image count.
 
 ## ⚙️ 在全新的 "Plugin UI Page" WebUI 中进行进一步配置
 
@@ -173,6 +176,10 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 | 参与团战 - 对话中连续出现图片的数量 | 达到该连续图片数量后触发快速语义分析。 | `6` |
 | 参与团战 - 快速语义分析 LLM 模型 | 继承 AstrBot 系统配置中的模型提供商列表；留空或不可用时继承当前会话模型选择策略。建议选择实时性更强的多模态模型，如 gpt-5.4-mini 或 mimo-v2.5。 | `[]` |
 
+`[CQ:image,...]` / `<image ...>` and similar OneBot/NapCat image-only message
+summaries do not count as text for "参与团战"; Plain text and image+text
+messages still reset the continuous-image streak.
+
 ### 5. 插件自动偷图
 
 本插件支持从指定的 QQ 群中自动偷图，支持自动去重、人工&机器审核。工作流如下：
@@ -198,7 +205,7 @@ UI Page 支持标准插件配置页面的全部设置。除此之外，它还支
 | 将入库图像加入插件其他功能的筛选流程 | 开启后，[固化图像库] 中的图片，会和手动上传图像一起，作为 “为用户寻找表情包” 和 “对话中主动发送表情包” 等插件图片功能的检索候选项。 | `true`  |
 | 收集来源 QQ 群群号列表               | 每行一个 QQ 群号。机器人只在这些群聊中自动收集图片。         | `[]`    |
 | 单张图片尺寸上限                     | 图像大小的上限。以 `KB` 作为计量单位。                       | `1024`  |
-| 自动过滤明显不是表情包的图片         | 开启后，不请求 LLM，只读取图片文件头中的尺寸与比例信息，自动跳过明显的手机截图、桌面截图或高清照片；无法判定或可能是动图时会放行。 | `true`  |
+| 非表情包图像过滤策略                 | 控制自动收集时如何处理照片、截图等非表情包图像：<br /> (1) `none` / “不过滤” ：去重后的全部图像，都会进入待筛选池；<br /> (2) `loose` / “宽松过滤 (保留照片等普通图像)”：沿用旧版文件头尺寸/比例过滤，跳过明显截图；<br /> (3) `strict` / “严格过滤 (只保留表情包)” ：只收 OneBot/NapCat raw message 中明确带表情包元数据的图片。 | `loose` |
 | 待筛选图片池存储数量上限             | 设置为 `-1` 表示无上限。                                     | `30`    |
 | 不触发收集的 QQ 号 (黑名单)          | 每行一个黑名单 QQ 号。插件在任何群聊中，都不会收集由这个黑名单里的 QQ 号发送的图片。 | `[]`    |
 | 自动拒绝曾经被丢弃过的图片           | 开启后，会记录在用户操作 [待筛选图片池] 时，被丢弃的图片信息；再次见到相同图片时直接跳过。 | `true`  |

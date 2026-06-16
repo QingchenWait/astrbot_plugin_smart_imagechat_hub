@@ -5,6 +5,7 @@ from .common import (
     AUTO_COLLECTION_QUEUE_MAXSIZE,
     Any,
     AstrMessageEvent,
+    AutoCollectionImageCandidate,
     COLLECTED_COLLECTION_FOLDER,
     COLLECTED_LIBRARY_SOURCE,
     EXTERNAL_IMPORT_FOLDER,
@@ -21,7 +22,9 @@ from .common import (
     _qq_id_candidates,
     aiohttp,
     asyncio,
+    auto_collection_strict_image_candidates,
     logger,
+    normalize_auto_collection_non_meme_filter_strategy,
     re,
     shutil,
     tempfile,
@@ -198,13 +201,22 @@ class AutoCollectionMixin:
         cfg = self._auto_collection_config()
         group_id = str(event.get_group_id() or "").strip()
         sender_id = str(event.get_sender_id() or "").strip()
-        images = [comp for comp in event.get_messages() if isinstance(comp, Image)]
+        images = tuple(comp for comp in event.get_messages() if isinstance(comp, Image))
+        strategy = normalize_auto_collection_non_meme_filter_strategy(cfg)
+        if strategy == "strict":
+            candidates = auto_collection_strict_image_candidates(event, images)
+        else:
+            candidates = tuple(
+                AutoCollectionImageCandidate(image, strict_confirmed=False)
+                for image in images
+            )
         self._enqueue_auto_collection(
             group_id,
             sender_id,
-            tuple(images),
+            candidates,
             self._to_int(cfg.get("max_file_size_kb"), 1024),
             bool(cfg.get("auto_accept", False)),
+            strategy,
         )
 
     def _start_auto_collection_worker(self) -> None:
@@ -224,12 +236,17 @@ class AutoCollectionMixin:
         self,
         group_id: str,
         sender_id: str,
-        images: tuple[Image, ...],
+        images: tuple[Any, ...],
         max_size_kb: int,
         auto_accept: bool,
+        non_meme_filter_strategy: str = "",
     ) -> bool:
         if not images:
             return False
+        if non_meme_filter_strategy not in {"none", "loose", "strict"}:
+            non_meme_filter_strategy = normalize_auto_collection_non_meme_filter_strategy(
+                self._auto_collection_config()
+            )
         queue = self._auto_collection_queue
         if queue is None:
             try:
@@ -247,6 +264,7 @@ class AutoCollectionMixin:
                     "images": images,
                     "max_size_kb": max_size_kb,
                     "auto_accept": bool(auto_accept),
+                    "non_meme_filter_strategy": non_meme_filter_strategy,
                 }
             )
             return True
@@ -271,6 +289,7 @@ class AutoCollectionMixin:
                     tuple(job.get("images") or ()),
                     self._to_int(job.get("max_size_kb"), 1024),
                     bool(job.get("auto_accept", False)),
+                    str(job.get("non_meme_filter_strategy") or ""),
                 )
             except asyncio.CancelledError:
                 raise
@@ -287,9 +306,10 @@ class AutoCollectionMixin:
         self,
         group_id: str,
         sender_id: str,
-        images: tuple[Image, ...],
+        images: tuple[Any, ...],
         max_size_kb: int,
         auto_accept: bool,
+        non_meme_filter_strategy: str = "",
     ) -> None:
         cfg = self._auto_collection_config()
         if not cfg.get("enabled"):
@@ -309,13 +329,26 @@ class AutoCollectionMixin:
             return
 
         accepted_any = False
-        for image in images:
+        strategy = str(
+            non_meme_filter_strategy
+            or cfg.get("non_meme_filter_strategy")
+            or "loose"
+        ).strip()
+        if strategy not in {"none", "loose", "strict"}:
+            strategy = normalize_auto_collection_non_meme_filter_strategy(cfg)
+        for raw_image in images:
             if not self._auto_collection_can_accept_new_item(auto_accept):
                 break
+            if isinstance(raw_image, AutoCollectionImageCandidate):
+                candidate = raw_image
+            else:
+                candidate = AutoCollectionImageCandidate(raw_image)
+            if strategy == "strict" and not candidate.strict_confirmed:
+                continue
             image_path = ""
             try:
                 image_path = await self._resolve_collected_image_path(
-                    image,
+                    candidate.image,
                     max_size_kb,
                 )
             except Exception as exc:
@@ -331,7 +364,7 @@ class AutoCollectionMixin:
                 self._cleanup_auto_collection_temp_path(image_path)
                 continue
             if (
-                cfg.get("filter_obvious_non_meme_images", True)
+                strategy == "loose"
                 and self._is_obvious_non_meme_image(source_path)
             ):
                 self._cleanup_auto_collection_temp_path(image_path)

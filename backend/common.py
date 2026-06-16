@@ -105,6 +105,26 @@ class CaptionGenerationError(RuntimeError):
         self.detail = detail or message
 
 
+class AutoCollectionImageCandidate:
+    __slots__ = ("image", "strict_confirmed")
+
+    def __init__(self, image: Any, strict_confirmed: bool = False) -> None:
+        self.image = image
+        self.strict_confirmed = bool(strict_confirmed)
+
+
+class AutoCollectionRawImage:
+    __slots__ = ("file", "path", "url")
+
+    def __init__(self, *, url: str = "", file: str = "", path: str = "") -> None:
+        self.url = str(url or "").strip()
+        self.file = str(file or "").strip()
+        self.path = str(path or "").strip()
+
+    async def convert_to_file_path(self) -> str:
+        return ""
+
+
 def set_auto_collection_plugin(plugin: Any) -> None:
     global _AUTO_COLLECTION_PLUGIN_REF  # noqa: PLW0603
     _AUTO_COLLECTION_PLUGIN_REF = weakref.ref(plugin)
@@ -157,6 +177,33 @@ def _normalize_qq_id_list(raw: Any) -> list[str]:
     return qq_ids
 
 
+def _to_bool_compat(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on", "y"}:
+            return True
+        if normalized in {"0", "false", "no", "off", "n"}:
+            return False
+        return default
+    return bool(value)
+
+
+def normalize_auto_collection_non_meme_filter_strategy(raw: Any) -> str:
+    raw = raw if isinstance(raw, dict) else {}
+    strategy = str(raw.get("non_meme_filter_strategy") or "").strip().lower()
+    if strategy in {"none", "loose", "strict"}:
+        return strategy
+    return (
+        "loose"
+        if _to_bool_compat(raw.get("filter_obvious_non_meme_images"), True)
+        else "none"
+    )
+
+
 def _raw_sender_user_id(raw_message: Any) -> Any:
     if isinstance(raw_message, dict):
         if raw_message.get("user_id") is not None:
@@ -191,7 +238,205 @@ def _event_sender_qq_candidates(event: AstrMessageEvent) -> set[str]:
     return candidates
 
 
+def _raw_message_segments(event: AstrMessageEvent) -> list[Any]:
+    message_obj = getattr(event, "message_obj", None)
+    raw_message = getattr(message_obj, "raw_message", None)
+    candidates = [
+        getattr(raw_message, "message", None),
+        raw_message.get("message") if isinstance(raw_message, dict) else None,
+        raw_message,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, (list, tuple)):
+            return list(candidate)
+    return []
+
+
+def _raw_segment_type(segment: Any) -> str:
+    if isinstance(segment, dict):
+        return str(segment.get("type") or "").strip().lower()
+    return str(getattr(segment, "type", "") or "").strip().lower()
+
+
+def _raw_segment_data(segment: Any) -> Any:
+    if isinstance(segment, dict):
+        data = segment.get("data")
+        return data if data is not None else {}
+    return getattr(segment, "data", None) or {}
+
+
+def _raw_data_value(data: Any, key: str) -> Any:
+    if isinstance(data, dict):
+        return data.get(key)
+    return getattr(data, key, None)
+
+
+def _raw_text_value(data: Any, keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = _raw_data_value(data, key)
+        if value is None:
+            continue
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _raw_data_has_any(data: Any, keys: tuple[str, ...]) -> bool:
+    for key in keys:
+        value = _raw_data_value(data, key)
+        if value is not None and str(value or "").strip():
+            return True
+    return False
+
+
+def _strict_meme_url(data: Any) -> str:
+    urls = _strict_meme_urls(data)
+    return urls[0] if urls else ""
+
+
+def _strict_meme_urls(data: Any) -> list[str]:
+    urls: list[str] = []
+    for key in (
+        "url",
+        "cdnurl",
+        "cdn_url",
+        "raw_url",
+        "origin_url",
+        "original_url",
+        "thumb",
+        "thumb_url",
+    ):
+        text = _raw_text_value(data, (key,))
+        if text.startswith(("http://", "https://")):
+            urls.append(text)
+    return urls
+
+
+def _raw_image_segment_is_explicit_meme(data: Any) -> bool:
+    sub_type = _raw_text_value(data, ("sub_type", "subType"))
+    if sub_type == "1":
+        return True
+    summary = _raw_text_value(data, ("summary",))
+    lowered_summary = summary.lower()
+    if any(token in lowered_summary for token in ("表情", "emoji", "sticker")):
+        return True
+    if _raw_data_has_any(
+        data,
+        ("emoji_id", "emojiId", "emoji_package_id", "emojiPackageId"),
+    ):
+        return True
+    return any(
+        "vip.qq.com/club/item/parcel" in url.lower()
+        or "gxh.vip.qq.com" in url.lower()
+        for url in _strict_meme_urls(data)
+    )
+
+
+def _auto_collection_signature_values(value: Any) -> set[str]:
+    text = str(value or "").strip()
+    if not text or text.startswith("base64://"):
+        return set()
+    values = {text, unquote(text)}
+    parsed = urlparse(text)
+    path = unquote(parsed.path or text)
+    name = Path(path).name
+    if len(name) >= 12:
+        values.add(name)
+    return {item for item in values if item}
+
+
+def _image_component_signature_values(image: Any) -> set[str]:
+    values: set[str] = set()
+    for attr in ("file", "url", "path"):
+        values.update(_auto_collection_signature_values(getattr(image, attr, None)))
+    return values
+
+
+def _raw_image_signature_values(data: Any) -> set[str]:
+    values: set[str] = set()
+    for key in (
+        "file",
+        "url",
+        "path",
+        "file_id",
+        "fileId",
+        "file_unique",
+        "fileUnique",
+    ):
+        values.update(_auto_collection_signature_values(_raw_data_value(data, key)))
+    return values
+
+
+def _match_strict_raw_image_component(
+    data: Any,
+    images: tuple[Image, ...],
+    used_indexes: set[int],
+) -> int:
+    raw_values = _raw_image_signature_values(data)
+    if not raw_values:
+        return -1
+    for index, image in enumerate(images):
+        if index in used_indexes:
+            continue
+        if raw_values & _image_component_signature_values(image):
+            return index
+    return -1
+
+
+def auto_collection_strict_image_candidates(
+    event: AstrMessageEvent,
+    images: tuple[Image, ...],
+) -> tuple[AutoCollectionImageCandidate, ...]:
+    segments = _raw_message_segments(event)
+    if not segments:
+        return ()
+
+    candidates: list[AutoCollectionImageCandidate] = []
+    used_image_indexes: set[int] = set()
+    raw_image_index = 0
+    raw_mface_count = 0
+    for segment in segments:
+        segment_type = _raw_segment_type(segment)
+        data = _raw_segment_data(segment)
+        if segment_type == "image":
+            if _raw_image_segment_is_explicit_meme(data):
+                image_index = _match_strict_raw_image_component(
+                    data,
+                    images,
+                    used_image_indexes,
+                )
+                if image_index < 0 and raw_image_index < len(images):
+                    image_index = raw_image_index
+                if image_index >= 0 and image_index not in used_image_indexes:
+                    candidates.append(
+                        AutoCollectionImageCandidate(
+                            images[image_index],
+                            strict_confirmed=True,
+                        )
+                    )
+                    used_image_indexes.add(image_index)
+            raw_image_index += 1
+            continue
+        if segment_type not in {"mface", "marketface"}:
+            continue
+        if raw_mface_count >= AUTO_COLLECTION_STRICT_MFACE_MAX_IMAGES:
+            continue
+        for url in _strict_meme_urls(data):
+            if raw_mface_count >= AUTO_COLLECTION_STRICT_MFACE_MAX_IMAGES:
+                break
+            candidates.append(
+                AutoCollectionImageCandidate(
+                    AutoCollectionRawImage(url=url, file=url),
+                    strict_confirmed=True,
+                )
+            )
+            raw_mface_count += 1
+    return tuple(candidates)
+
+
 AUTO_COLLECTION_QUEUE_MAXSIZE = 24
+AUTO_COLLECTION_STRICT_MFACE_MAX_IMAGES = 3
 AUTO_COLLECTION_IMAGE_CONVERT_TIMEOUT_SECONDS = 8
 AUTO_COLLECTION_DOWNLOAD_CHUNK_BYTES = 64 * 1024
 PROGRESS_PAGE_CONFIG_VALUE = (
@@ -364,6 +609,9 @@ class AutoImageCollectionMessageFilter(filter.CustomFilter):
                 )
                 if str(item or "").strip()
             ],
+            "non_meme_filter_strategy": (
+                normalize_auto_collection_non_meme_filter_strategy(raw_cfg)
+            ),
         }
         if not collection_cfg["enabled"]:
             return False
@@ -379,9 +627,16 @@ class AutoImageCollectionMessageFilter(filter.CustomFilter):
         if sender_id and self_id and sender_id == self_id:
             return False
 
-        images = [comp for comp in event.get_messages() if isinstance(comp, Image)]
-        has_image = bool(images)
-        if not has_image:
+        images = tuple(comp for comp in event.get_messages() if isinstance(comp, Image))
+        strategy = collection_cfg["non_meme_filter_strategy"]
+        if strategy == "strict":
+            collection_images = auto_collection_strict_image_candidates(event, images)
+        else:
+            collection_images = tuple(
+                AutoCollectionImageCandidate(image, strict_confirmed=False)
+                for image in images
+            )
+        if not collection_images:
             return False
 
         ignored_sender_ids = set(
@@ -399,9 +654,10 @@ class AutoImageCollectionMessageFilter(filter.CustomFilter):
         plugin._enqueue_auto_collection(
             group_id,
             sender_id,
-            tuple(images),
+            collection_images,
             plugin._to_int(raw_cfg.get("max_file_size_kb"), 1024),
             bool(raw_cfg.get("auto_accept", False)),
+            strategy,
         )
         return False
 
@@ -415,7 +671,8 @@ class MemeCombatMessageFilter(filter.CustomFilter):
             return False
 
         raw_cfg = plugin.config.get(MEME_COMBAT_CONFIG_KEY, {})
-        if not isinstance(raw_cfg, dict) or not bool(raw_cfg.get("enabled", False)):
+        cfg = plugin._normalize_meme_combat_config(raw_cfg)
+        if not cfg.get("enabled"):
             return False
 
         group_id = str(event.get_group_id() or "").strip()

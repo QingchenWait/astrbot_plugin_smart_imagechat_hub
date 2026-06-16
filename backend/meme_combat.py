@@ -14,6 +14,7 @@ from .common import (
     json,
     logger,
     random,
+    re,
     tempfile,
     time,
     urlparse,
@@ -250,8 +251,6 @@ class MemeCombatMixin:
 
         now = time.time()
         state = self._meme_combat_group_state(group_id)
-        if has_plain_text:
-            state["streak"] = []
 
         image_items = self._meme_combat_image_infos(images)
         if not image_items:
@@ -266,11 +265,21 @@ class MemeCombatMixin:
                 "sender_id": sender_id,
             }
             state["events"].append(event_item)
-            if not has_plain_text:
-                state["streak"].append(event_item)
+            state["streak"].append(event_item)
             follow_candidates.append(event_item)
 
         self._trim_meme_combat_state(state, cfg, now)
+        battle_cfg = cfg.get("battle", {})
+        if battle_cfg.get("enabled"):
+            threshold = self._to_int(battle_cfg.get("continuous_image_count"), 6)
+            logger.debug(
+                "astrbot_plugin_smart_imagechat_hub: meme battle streak updated: "
+                "group_id=%s image_count=%d streak_count=%d threshold=%d",
+                group_id,
+                len(image_items),
+                len(state.get("streak", [])),
+                threshold,
+            )
         await self._maybe_follow_meme_pattern(event, group_id, follow_candidates, cfg)
         self._maybe_start_meme_battle_task(event, group_id, state, cfg)
 
@@ -357,9 +366,16 @@ class MemeCombatMixin:
         infos: list[dict[str, Any]] = []
         for image in images:
             info = self._meme_combat_image_info(image)
-            if info:
-                infos.append(info)
+            infos.append(info or self._meme_combat_unresolved_image_info(image))
         return infos
+
+    def _meme_combat_unresolved_image_info(self, image: Image) -> dict[str, Any]:
+        return {
+            "digest": "",
+            "path": "",
+            "image": image,
+            "send_source": {},
+        }
 
     def _meme_combat_has_plain_text(
         self,
@@ -374,9 +390,20 @@ class MemeCombatMixin:
                 if isinstance(comp, Plain) and str(comp.text or "").strip():
                     return True
             outline = job.get_message_str() or ""
+        return bool(self._meme_combat_plain_text_outline(outline).strip())
+
+    def _meme_combat_plain_text_outline(self, outline: str) -> str:
+        outline = str(outline or "")
         for token in ("[图片]", "[image]", "[Image]", "[图片消息]"):
             outline = outline.replace(token, "")
-        return bool(outline.strip())
+        outline = re.sub(
+            r"\[CQ:(?:image|face|mface|marketface)(?:,[^\]]*)?\]",
+            "",
+            outline,
+            flags=re.IGNORECASE,
+        )
+        outline = re.sub(r"<image(?:\s+[^>]*)?>", "", outline, flags=re.IGNORECASE)
+        return outline
 
     def _meme_combat_image_info(self, image: Image) -> dict[str, Any] | None:
         local_path = self._meme_combat_fast_image_path(image)
@@ -722,14 +749,21 @@ class MemeCombatMixin:
             return
         if len(self._meme_combat_tasks) >= MEME_COMBAT_MAX_BATTLE_TASKS:
             return
-        sample = random.sample(streak, 2) if len(streak) >= 2 else streak[:]
-        if len(sample) < 2:
+        candidates = streak[:]
+        random.shuffle(candidates)
+        if len(candidates) < 2:
             return
-        state["streak"] = []
-        self._meme_combat_last_battle_at[group_id] = now
+        logger.info(
+            "astrbot_plugin_smart_imagechat_hub: meme battle threshold reached: "
+            "group_id=%s streak_count=%d threshold=%d window_seconds=%d",
+            group_id,
+            len(streak),
+            threshold,
+            window,
+        )
         self._meme_combat_battle_running_groups.add(group_id)
         task = asyncio.create_task(
-            self._handle_meme_battle(event, group_id, sample, battle_cfg)
+            self._handle_meme_battle(event, group_id, candidates, battle_cfg)
         )
         self._meme_combat_tasks.add(task)
         task.add_done_callback(self._meme_combat_tasks.discard)
@@ -745,6 +779,7 @@ class MemeCombatMixin:
             await self._sync_library(caption_mode="none")
             candidates = self._library_candidates()
             if not candidates:
+                self._defer_meme_battle_retry(group_id, "empty library")
                 return
             image_paths = []
             for item in image_items:
@@ -754,6 +789,10 @@ class MemeCombatMixin:
                 if len(image_paths) >= 2:
                     break
             if len(image_paths) < 2:
+                self._defer_meme_battle_retry(
+                    group_id,
+                    f"resolved only {len(image_paths)} source images",
+                )
                 return
             provider_id = str(battle_cfg.get("analysis_provider_id") or "").strip()
             provider_mode = (
@@ -776,9 +815,11 @@ class MemeCombatMixin:
                 provider_id,
             )
             if not profile_text:
+                self._defer_meme_battle_retry(group_id, "empty image analysis result")
                 return
             profile, ranked = self._rank_search_candidates(profile_text, candidates)
             if not ranked:
+                self._defer_meme_battle_retry(group_id, "no ranked library candidate")
                 return
             try:
                 decision = await self._analyze_meme_battle_match(
@@ -804,15 +845,20 @@ class MemeCombatMixin:
             if not image_item:
                 image_item = self._fallback_match(ranked)
             if not image_item:
+                self._defer_meme_battle_retry(group_id, "no matched library image")
                 return
             image_path = self._abs_plugin_data_path(image_item["rel_path"])
-            await self._send_meme_combat_image(
+            sent = await self._send_meme_combat_image(
                 event,
                 group_id,
                 str(image_path),
                 source="battle",
                 reset_window=True,
             )
+            if sent:
+                self._meme_combat_last_battle_at[group_id] = time.time()
+            else:
+                self._defer_meme_battle_retry(group_id, "send image failed")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -826,6 +872,17 @@ class MemeCombatMixin:
             )
         finally:
             self._meme_combat_battle_running_groups.discard(group_id)
+
+    def _defer_meme_battle_retry(self, group_id: str, reason: str) -> None:
+        self._meme_combat_battle_failure_until[group_id] = (
+            time.time() + MEME_COMBAT_BATTLE_FAILURE_COOLDOWN_SECONDS
+        )
+        logger.info(
+            "astrbot_plugin_smart_imagechat_hub: meme battle skipped after threshold: "
+            "group_id=%s reason=%s",
+            group_id,
+            reason,
+        )
 
     async def _analyze_meme_battle_images(
         self,

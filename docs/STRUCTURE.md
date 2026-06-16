@@ -128,9 +128,11 @@ astrbot_plugin_smart_imagechat_hub/
   path through `_prepare_send_image_path(..., ignore_tag_gate=True)` so the
   send-style GIF path is applied consistently. `image_burst` probabilistically
   sends extra related images after this plugin sends an image. `battle` detects
-  continuous
-  image-only group dialogue, quickly analyzes two sampled images with the
-  configured provider, then retrieves a semantically close library image.
+  continuous image-only group dialogue, quickly analyzes two sampled images with
+  the configured provider, then retrieves a semantically close library image.
+  OneBot/NapCat image-only message summaries such as `[CQ:image,...]` and
+  `<image ...>` are not treated as plain text for this streak; real Plain text
+  or mixed image+text messages still interrupt it.
 - `send_image_style`: Controls send-only temporary GIF conversion. `enabled`
   defaults to `true`; when enabled, non-GIF local images selected for plugin
   sends are converted to 1-frame GIF copies under `send_image_style_cache/`
@@ -147,14 +149,20 @@ astrbot_plugin_smart_imagechat_hub/
   Images are first stored in the pending pool, then moved into the solidified
   library for captioning and retrieval. `ignored_sender_ids` lists QQ numbers
   whose images are not auto-collected in any group while their messages are
-  still processed normally. `filter_obvious_non_meme_images` uses local image
-  header width/height/animation checks to skip obvious screenshots or
-  high-resolution photos before hashing/copying, without calling an LLM or
-  decoding full images. `auto_reject_discarded` optionally records only
-  pending-pool manual discards as SHA-256 digests and skips those images during
-  future collection. Runtime collection uses a bounded background queue
-  (`AUTO_COLLECTION_QUEUE_MAXSIZE`) so image bursts are skipped instead of
-  accumulating work on AstrBot's message-processing path.
+  still processed normally. `non_meme_filter_strategy` replaces the old
+  `filter_obvious_non_meme_images` boolean and accepts `none`, `loose`, or
+  `strict`; the default is `loose`. `none` disables non-meme filtering.
+  `loose` preserves the old local image-header width/height/animation checks
+  that skip obvious screenshots or high-resolution photos before hashing/copying,
+  without calling an LLM or decoding full images. `strict` only enqueues
+  OneBot/NapCat raw message images that are explicitly marked as meme/sticker
+  content and still leaves download/resolve work to the background worker. The
+  legacy boolean remains a migration input: missing/true normalizes to `loose`,
+  false normalizes to `none`, and a valid new strategy wins. `auto_reject_discarded`
+  optionally records only pending-pool manual discards as SHA-256 digests and
+  skips those images during future collection. Runtime collection uses a bounded
+  background queue (`AUTO_COLLECTION_QUEUE_MAXSIZE`) so image bursts are skipped
+  instead of accumulating work on AstrBot's message-processing path.
 - `scheduled_backup`: Controls daily automatic ZIP export, retention count, and
   the read-only list of stored backups.
 - `model_fallback_options`: Controls model-failure fallback for plugin-owned LLM
@@ -467,8 +475,12 @@ Main sections in `pages/image-center-page/index.html`:
 - Auto-collection dialog: `autoCollectionButton`, `autoCollectionOverlay`,
   save/cancel buttons, and the auto-collection config inputs, including
   `autoCollectionMaxSizeInput`, `autoCollectionFilterNonMemeInput`,
-  `autoCollectionTtlInput`, `autoCollectionIgnoredSendersInput`, and
-  `autoCollectionRejectDiscardedInput`.
+  `autoCollectionFilterNonMemeHint`, `autoCollectionTtlInput`,
+  `autoCollectionIgnoredSendersInput`, and `autoCollectionRejectDiscardedInput`.
+  `autoCollectionFilterNonMemeInput` is a select for
+  `auto_image_collection.non_meme_filter_strategy` with `none`, `loose`, and
+  `strict` options. The Page normalizes old snapshots containing only
+  `filter_obvious_non_meme_images`, but save payloads write the new strategy key.
 - Tag category dialog: `captionProviderInput` selects the default image
   caption provider, and `captionProviderWarning` shows either the missing-model
   warning or the Qwen speed reminder when a Qwen-series provider is selected.
@@ -738,7 +750,11 @@ The user search flow is deliberately lightweight:
   `battle.time_window_seconds`. At `battle.continuous_image_count`, it samples
   two images and resolves them only at trigger time. The trigger log includes
   `group_id`, candidate sample count, parsed image count, and whether the
-  analysis provider mode is inherited or explicit. Before visual analysis,
+  analysis provider mode is inherited or explicit. `_meme_combat_has_plain_text`
+  ignores OneBot/NapCat pure-image textual summaries (`[CQ:image,...]`,
+  `<image ...>`, and similar image-only summaries) so `_track_group_meme_combat`
+  keeps the battle streak for pure image traffic. Plain text components and
+  mixed image+text messages still count as text. Before visual analysis,
   `_analyze_meme_battle_images` calls
   `_prepare_meme_battle_analysis_image_input` for each sampled image. That
   helper writes a temporary battle-only JPEG through `asyncio.to_thread`,
@@ -793,9 +809,14 @@ The user search flow is deliberately lightweight:
   `_scheduled_backup_download_api` expose the scheduled-backup surface. Backup
   metadata includes a `version` field parsed from the ZIP filename.
 - `_collect_images_from_event`: Enqueues image collection jobs for selected
-  groups. The worker resolves each image to a local path, optionally applies the
-  local obvious-non-meme header filter, then stores accepted images in the
-  pending pool and leaves them outside retrieval until the user accepts them.
+  groups. It normalizes `auto_image_collection.non_meme_filter_strategy` before
+  enqueueing. In `strict` mode it first derives confirmed image candidates from
+  OneBot/NapCat raw message data and skips unconfirmed image components on the
+  hot path. In `none` and `loose` modes it enqueues ordinary AstrBot `Image`
+  components. The worker resolves each accepted candidate to a local path,
+  applies the local obvious-non-meme header filter only in `loose` mode, then
+  stores accepted images in the pending pool and leaves them outside retrieval
+  until the user accepts them.
 - `AutoImageCollectionMessageFilter`: Lives in `backend/common.py` and reads the
   plugin-owned `auto_image_collection` config through the weak plugin reference,
   so the enable switch and source groups work even when AstrBot global config
@@ -808,6 +829,13 @@ The user search flow is deliberately lightweight:
   path. HTTP URLs are downloaded with short timeouts and size-bounded streaming;
   local files are used directly; other component forms fall back to
   `Image.convert_to_file_path()` behind a timeout.
+- `auto_collection_strict_image_candidates` and related strict raw helpers:
+  Read only raw OneBot/NapCat message structure to confirm meme/sticker images.
+  Confirmed raw `image` segments include `sub_type`/`subType == 1`, summaries
+  containing `表情`, `emoji`, or `sticker`, `emoji_id`/`emoji_package_id`, or URLs
+  containing `vip.qq.com/club/item/parcel` or `gxh.vip.qq.com`. Raw `mface` and
+  `marketface` URLs are also supported, capped at the first 3 URLs. This strict
+  path intentionally does not download files, read image headers, or call LLMs.
 - `_is_obvious_non_meme_image`, `_auto_collection_image_header_info`,
   `_jpeg_header_info`, `_webp_header_info`, and `_bmp_header_info`: Lightweight
   auto-collection helpers that read a bounded file header to identify dimensions
@@ -975,6 +1003,13 @@ The user search flow is deliberately lightweight:
   message only samples `trigger_probability` once.
 - `_meme_combat_snapshot`, `_normalize_meme_combat_config`: Group meme-combat
   config IO.
+- `_normalize_auto_collection_config`,
+  `normalize_auto_collection_non_meme_filter_strategy`, and
+  `_auto_collection_config`: Auto-collection config IO and compatibility
+  migration. The schema field is
+  `auto_image_collection.non_meme_filter_strategy` (`none` / `loose` / `strict`,
+  default `loose`). Legacy `filter_obvious_non_meme_images=false` maps to
+  `none`; legacy `true` or missing maps to `loose`; a valid new strategy wins.
 
 ### Backup And Restore
 

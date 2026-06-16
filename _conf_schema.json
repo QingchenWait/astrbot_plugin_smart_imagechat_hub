@@ -255,11 +255,17 @@
         "type": "int",
         "default": 1024
       },
-      "filter_obvious_non_meme_images": {
-        "description": "自动过滤明显不是表情包的图片",
-        "type": "bool",
-        "default": true,
-        "hint": "开启后，插件会在不调用 LLM 的情况下，只读取图片文件头中的尺寸/比例信息，跳过明显的手机截图、桌面截图或高清照片。无法判定或可能是动图时会放行。"
+      "non_meme_filter_strategy": {
+        "description": "非表情包图像过滤策略",
+        "type": "string",
+        "options": ["none", "loose", "strict"],
+        "labels": [
+          "不过滤",
+          "宽松过滤 (保留照片等普通图像)",
+          "严格过滤 (只保留表情包)"
+        ],
+        "default": "loose",
+        "hint": "不过滤：所有图片进入待筛选池；宽松过滤：跳过明显的屏幕截图等，正常图片或无法区分的图像仍会保留；严格过滤：只收 OneBot/NapCat 明确标记为表情包的图片。"
       },
       "pending_pool_limit": {
         "description": "待筛选图片池存储数量上限",

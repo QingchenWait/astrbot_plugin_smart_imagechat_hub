@@ -273,6 +273,9 @@ const els = {
   autoCollectionFilterNonMemeInput: document.getElementById(
     "autoCollectionFilterNonMemeInput",
   ),
+  autoCollectionFilterNonMemeHint: document.getElementById(
+    "autoCollectionFilterNonMemeHint",
+  ),
   autoCollectionPendingLimitInput: document.getElementById(
     "autoCollectionPendingLimitInput",
   ),
@@ -576,6 +579,13 @@ const proactiveEmojiRetrievalModes = new Set([
 let autoCollectionConfigCache = {
   pending_pool_limit: 100,
   solidified_library_limit: 300,
+};
+const AUTO_COLLECTION_NON_MEME_FILTER_HINTS = {
+  none: "不过滤：所有图片都会进入待筛选图片池。",
+  loose:
+    "宽松过滤：跳过明显的屏幕截图等，正常图片或无法区分的图像仍会保留。",
+  strict:
+    "严格过滤：只收 OneBot/NapCat 明确标记为表情包的图片，过滤其他全部图像。",
 };
 const imageUrlCache = new Map();
 const thumbnailLoadQueue = [];
@@ -4641,8 +4651,9 @@ function fillAutoCollectionDialog(config) {
     ? config.source_groups.join("\n")
     : "";
   els.autoCollectionMaxSizeInput.value = String(config.max_file_size_kb ?? 1024);
-  els.autoCollectionFilterNonMemeInput.checked =
-    config.filter_obvious_non_meme_images !== false;
+  els.autoCollectionFilterNonMemeInput.value =
+    normalizeAutoCollectionNonMemeFilterStrategy(config);
+  updateAutoCollectionNonMemeFilterHint();
   els.autoCollectionPendingLimitInput.value = String(
     config.pending_pool_limit ?? 100,
   );
@@ -4666,8 +4677,9 @@ function readAutoCollectionDialog() {
     include_in_features: els.autoCollectionIncludeInput.checked,
     source_groups: normalizeTags(els.autoCollectionGroupsInput.value),
     max_file_size_kb: clampInt(els.autoCollectionMaxSizeInput.value, 1024, 1),
-    filter_obvious_non_meme_images:
-      els.autoCollectionFilterNonMemeInput.checked,
+    non_meme_filter_strategy: normalizeAutoCollectionNonMemeFilterStrategy({
+      non_meme_filter_strategy: els.autoCollectionFilterNonMemeInput.value,
+    }),
     pending_pool_limit: clampInt(
       els.autoCollectionPendingLimitInput.value,
       100,
@@ -4685,6 +4697,25 @@ function readAutoCollectionDialog() {
       -1,
     ),
   };
+}
+
+function normalizeAutoCollectionNonMemeFilterStrategy(config) {
+  const strategy = String(config?.non_meme_filter_strategy || "")
+    .trim()
+    .toLowerCase();
+  if (["none", "loose", "strict"].includes(strategy)) {
+    return strategy;
+  }
+  return config?.filter_obvious_non_meme_images === false ? "none" : "loose";
+}
+
+function updateAutoCollectionNonMemeFilterHint() {
+  const strategy = normalizeAutoCollectionNonMemeFilterStrategy({
+    non_meme_filter_strategy: els.autoCollectionFilterNonMemeInput.value,
+  });
+  els.autoCollectionFilterNonMemeHint.textContent =
+    AUTO_COLLECTION_NON_MEME_FILTER_HINTS[strategy] ||
+    AUTO_COLLECTION_NON_MEME_FILTER_HINTS.loose;
 }
 
 async function openMemeCombatDialog() {
@@ -5797,6 +5828,10 @@ els.proactiveEmojiOverlay.addEventListener("click", (event) => {
   }
 });
 els.autoCollectionSaveButton.addEventListener("click", saveAutoCollectionDialog);
+els.autoCollectionFilterNonMemeInput.addEventListener(
+  "change",
+  updateAutoCollectionNonMemeFilterHint,
+);
 els.autoCollectionCancelButton.addEventListener(
   "click",
   closeAutoCollectionDialog,

@@ -1697,6 +1697,13 @@ textarea {
   min-width: 0;
 }
 
+.config-hint {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .fallback-mode-options,
 .fallback-provider-picker,
 .fallback-provider-list {

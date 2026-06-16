@@ -748,14 +748,16 @@
 
             <div class="config-item">
               <div class="config-item-copy">
-                <label for="autoCollectionFilterNonMemeInput">自动过滤明显不是表情包的图片</label>
-                <p>开启后，只读取图片文件头中的尺寸和比例信息，跳过明显的手机截图、桌面截图或高清照片；无法判定或可能是动图时会放行。</p>
+                <label for="autoCollectionFilterNonMemeInput">非表情包图像过滤策略</label>
+                <p>控制自动收集时如何处理照片、截图等图像。</p>
               </div>
               <div class="config-item-control">
-                <label class="switch-option">
-                  <input id="autoCollectionFilterNonMemeInput" type="checkbox" />
-                  <span> </span>
-                </label>
+                <select id="autoCollectionFilterNonMemeInput">
+                  <option value="none">不过滤</option>
+                  <option value="loose">宽松过滤 (保留照片等普通图像)</option>
+                  <option value="strict">严格过滤 (只保留表情包)</option>
+                </select>
+                <p id="autoCollectionFilterNonMemeHint" class="config-hint"></p>
               </div>
             </div>
 

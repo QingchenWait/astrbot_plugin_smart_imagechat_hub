@@ -25,6 +25,7 @@ from .common import (
     TAG_CATEGORY_LABEL_TO_KEY,
     TAG_CATEGORY_PRESETS,
     USER_SEARCH_CONFIG_KEY,
+    normalize_auto_collection_non_meme_filter_strategy,
     _normalize_qq_id_list,
     asyncio,
     json,
@@ -852,6 +853,9 @@ class CaptionLibraryMixin:
             raw.get("solidified_library_limit"),
             300,
         )
+        non_meme_filter_strategy = normalize_auto_collection_non_meme_filter_strategy(
+            raw
+        )
         return {
             "enabled": self._to_bool(raw.get("enabled"), False),
             "include_in_features": self._to_bool(
@@ -864,10 +868,8 @@ class CaptionLibraryMixin:
             ),
             "source_groups": source_groups,
             "ignored_sender_ids": ignored_sender_ids,
-            "filter_obvious_non_meme_images": self._to_bool(
-                raw.get("filter_obvious_non_meme_images"),
-                True,
-            ),
+            "non_meme_filter_strategy": non_meme_filter_strategy,
+            "filter_obvious_non_meme_images": non_meme_filter_strategy == "loose",
             "max_file_size_kb": max(1, max_file_size_kb),
             "pending_pool_limit": max(0, pending_pool_limit),
             "pending_ttl_days": max(0, pending_ttl_days),

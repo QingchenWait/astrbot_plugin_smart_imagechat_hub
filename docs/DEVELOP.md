@@ -2,6 +2,61 @@
 
 # v2.8.6
 
+- Follow-up bugfix without a version bump: `backend/meme_combat.py` now treats
+  OneBot/NapCat image-only summaries such as `[CQ:image,...]` and `<image ...>`
+  as non-text in `_meme_combat_has_plain_text`. The previous plain-text
+  detection made `_track_group_meme_combat()` clear the battle streak for every
+  image-only message summary, so "参与团战" could not reach
+  `battle.continuous_image_count`. Real Plain text and mixed image+text
+  messages still count as text and continue to interrupt the streak.
+
+- Added `auto_image_collection.non_meme_filter_strategy` as the replacement for
+  the old `filter_obvious_non_meme_images` boolean. The change was made because
+  the previous switch mixed two different user intents: keeping ordinary photos
+  while rejecting obvious screenshots, versus collecting only platform-marked
+  meme/sticker images. The new values are `none`, `loose`, and `strict`.
+  `loose` is the default and preserves the previous local header size/aspect
+  filter behavior; `none` disables non-meme filtering; `strict` only accepts
+  images that OneBot/NapCat raw message data explicitly marks as meme/sticker
+  content.
+
+- Compatibility migration stays in `backend/caption_library.py` and shared
+  normalization in `backend/common.py`: when `non_meme_filter_strategy` is
+  present and valid it wins; otherwise legacy `filter_obvious_non_meme_images`
+  maps `false -> none` and `true` or missing -> `loose`. Snapshots still expose
+  the legacy boolean as `true` only for `loose` so old consumers can read a
+  sensible value, but Page saves the new key and does not write the old bool.
+
+- Runtime behavior changed in `backend/auto_collection.py`. The hot
+  event-path collection now normalizes the strategy before enqueueing. In
+  `strict` mode it builds candidates only from raw OneBot/NapCat markers:
+  raw `image` segments with `sub_type`/`subType == 1`, `summary` containing
+  `表情`/`emoji`/`sticker`, `emoji_id`/`emoji_package_id`, URLs under
+  `vip.qq.com/club/item/parcel` or `gxh.vip.qq.com`, plus raw `mface` and
+  `marketface` URLs. The raw mface/marketface fallback is capped at the first
+  3 URLs. This path does not download, inspect image bytes, or call LLMs; the
+  background worker still owns download/resolve, size checks, dedupe, loose
+  header filtering, and pending-pool writes.
+
+- UI/schema updates: `_conf_schema.json` exposes
+  `auto_image_collection.non_meme_filter_strategy` as a string select with
+  labels "不过滤", "宽松过滤 (保留照片等普通图像)", and
+  "严格过滤 (只保留表情包)". The Plugin Page auto-collection dialog changed
+  `autoCollectionFilterNonMemeInput` from a checkbox to a select and added the
+  gray `autoCollectionFilterNonMemeHint`. `pages/image-center-page/app.js`
+  normalizes old snapshots for display but saves only the new strategy key.
+
+- Verification recorded for this change: `python -m json.tool
+  _conf_schema.json`, `python -m compileall`, `node --check`, `git diff
+  --check`, and targeted helper assertions passed. Direct `import main` failed
+  because package-relative imports require package-style loading; package-style
+  import succeeded, which is the expected AstrBot/plugin import shape.
+
+- Manual verification still needed: AstrBot WebUI/plugin reload, Plugin Page
+  auto-collection dialog display/save, native WebUI select display/save, and
+  real group collection behavior for OneBot/NapCat strict-mode image, mface,
+  marketface, ordinary photo, screenshot, and non-marked image messages.
+
 - Added proactive emoji `user_message_fast_prefilter` retrieval mode. It is
   limited to proactive emoji replies, keeps the existing library format, runs
   local multi-tag fine ranking in `backend/proactive_fast_retrieval.py`, sends

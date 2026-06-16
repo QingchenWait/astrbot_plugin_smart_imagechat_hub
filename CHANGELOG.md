@@ -12,6 +12,7 @@
 - 新增“对话中主动发送表情包”的“调试模式”开关，默认关闭；开启后仅输出该功能的逐步排查日志。
 - Plugin Page 和原生 `_conf_schema.json` 均提供检索模式下拉选择。
 - Plugin Page 在串行模式且 provider 文本包含 mimo / qwen / 通义时显示黄色速度提示，建议切换并发检索模式。
+- 新增 `auto_image_collection.non_meme_filter_strategy`，提供 `none`、`loose`、`strict` 三档非表情包图像过滤策略。
 
 ### Changed
 
@@ -20,8 +21,17 @@
 - 图像检索、候选排序和选图核心逻辑保持不变，仅调整主动表情包分析的调用时机和输入文本来源；普通搜图、群聊智能斗图、图库格式和打标流程不受影响。
 - 主动表情包调试日志限定在该功能流程内；关闭调试模式时不新增 info 日志，也不改变其他功能日志输出。
 - Plugin Page 中 mimo / qwen / 通义 + 串行模式提示移动到“表情包检索模式”下拉菜单正下方，并复用黄色小字 `.provider-warning` 样式。
+- 自动收集的旧布尔配置 `filter_obvious_non_meme_images` 继续兼容迁移：旧 `false` 归一化为 `none`，旧 `true` 或缺省归一化为 `loose`，新 `non_meme_filter_strategy` 优先。
+- Plugin Page 自动收集弹窗将原过滤 checkbox 改为三档 select，并显示灰色说明；保存时写入新键，不再写旧布尔键。原生 `_conf_schema.json` 同步改为 string 下拉。
+- `strict` 策略只读取 OneBot/NapCat raw message 结构字段判定是否为明确表情包，不下载、不读图、不调用 LLM；后续下载仍由后台 worker 处理。
 
 ### Fixed
+
+- Fixed meme-combat battle streak detection for OneBot/NapCat image-only
+  summaries such as `[CQ:image,...]` and `<image ...>`. These summaries no
+  longer count as plain text, so image-only group battles can reach the
+  `continuous_image_count` trigger while mixed image+text messages still reset
+  the streak.
 
 - 新增内部 marker，避免插件自身的主动表情包 LLM 分析请求递归触发并发检索入口。
 
@@ -29,6 +39,7 @@
 
 - 补充主动表情包检索模式、默认值、使用建议、调用时机和调试注意事项。
 - 补充主动表情包调试模式、日志边界和 Plugin Page 提示位置说明。
+- 补充自动收集非表情包过滤策略、兼容迁移、Page/WebUI 映射和 strict raw message 判定说明。
 
 ## v2.8.5
 
